@@ -145,34 +145,36 @@ static void bcm2712_realize(DeviceState *dev, Error **errp)
     MemoryRegion *parent_peri_mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->peripherals), 0);
     fprintf(stderr, "bcm2712_realize: parent_peri_mr = %p\n", parent_peri_mr);
     if (parent_peri_mr) {
-        /* Try to remove from system_memory first */
-        fprintf(stderr, "bcm2712_realize: deleting parent_peri_mr from system_memory\n");
-        memory_region_del_subregion(get_system_memory(), parent_peri_mr);
-        /* If that fails, try to find and remove from any container */
-        fprintf(stderr, "bcm2712_realize: checking parent_peri_mr->container\n");
-        if (parent_peri_mr->container) {
+        /* Check if it's in system_memory */
+        fprintf(stderr, "bcm2712_realize: parent_peri_mr->container = %p\n", parent_peri_mr->container);
+        if (parent_peri_mr->container == get_system_memory()) {
+            fprintf(stderr, "bcm2712_realize: deleting parent_peri_mr from system_memory\n");
+            memory_region_del_subregion(get_system_memory(), parent_peri_mr);
+        } else if (parent_peri_mr->container) {
             fprintf(stderr, "bcm2712_realize: deleting parent_peri_mr from container\n");
             memory_region_del_subregion(parent_peri_mr->container, parent_peri_mr);
+        } else {
+            fprintf(stderr, "bcm2712_realize: parent_peri_mr has no container, skipping\n");
         }
     }
     fprintf(stderr, "bcm2712_realize: parent peri_mr handled\n");
 
-    /* Map SOC peripheral region (32-bit alias: 0x7c000000-0x7fffffff) */
-    /* Use negative priority to overlay on top of RAM (lower number = higher priority) */
-    /* Peri_mr is not auto-mapped (no sysbus_init_mmio), so map it manually with priority -1. */
-    fprintf(stderr, "bcm2712_realize: mapping peri_mr at 0x7c000000\n");
-    memory_region_add_subregion_overlap(get_system_memory(), BCM2712_PERI_BASE,
-                                        &ps->peri_mr, -1);
-    fprintf(stderr, "bcm2712_realize: peri_mr mapped\n");
-
     /* Map SCB bus region (0x107c000000+) */
     memory_region_add_subregion(get_system_memory(), BCM2712_SCB_BASE, &s->sysbus_mr);
 
-    /* Map BCM2835 UART0 (PL011) at 0xFE201000 for qemu-compatible kernels */
+    /* Map BCM2835 UART0 (PL011) at 0xFE201000 for qemu-compatible kernels.
+     * Create an alias since the UART0 iomem is already a subregion of peri_mr. */
     {
         MemoryRegion *uart0_mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ps_base->uart0), 0);
-        memory_region_add_subregion(get_system_memory(), 0xfe201000ULL, uart0_mr);
+        MemoryRegion uart0_alias;
+        memory_region_init_alias(&uart0_alias, OBJECT(s), "bcm2712-uart0-legacy", uart0_mr, 0, memory_region_size(uart0_mr));
+        memory_region_add_subregion(get_system_memory(), 0xfe201000ULL, &uart0_alias);
     }
+
+    /* Map the peripherals at the correct address (0x7c000000) using the standard mechanism.
+     * The child's peri_mr (initialized as alias of parent's peri_mr) is registered as
+     * mmio region 0 by sysbus_init_mmio in bcm2712_peripherals_init. */
+    sysbus_mmio_map_overlap(SYS_BUS_DEVICE(&s->peripherals), 0, BCM2712_PERI_BASE, 1);
 
     /* Initialize GIC-400 */
     if (!object_property_set_uint(OBJECT(&s->gic), "revision", 2, &local_err)) {
@@ -284,19 +286,25 @@ static void bcm2712_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->rp1.uart1), 0,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_RP1_UART1));
 
-    /* V3D GPU */
+    /* V3D GPU - DISABLED */
+#if 0
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->v3d), 0,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_V3D));
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->v3d), 1,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_V3D_MMU));
+#endif
 
-    /* GENET Ethernet controller */
+    /* GENET Ethernet controller - DISABLED */
+#if 0
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->genet), 0,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_GENET));
+#endif
 
-    /* XHCI USB 3.0 controller */
+    /* XHCI USB 3.0 controller - DISABLED */
+#if 0
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->xhci), 0,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_XHCI));
+#endif
 
     /* PCIe controllers (unimplemented) - DISABLED for now */
     /*    sysbus_connect_irq(SYS_BUS_DEVICE(&ps->pcie0), 0,
@@ -330,7 +338,8 @@ static void bcm2712_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->pcie2), 4,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_PCIE2_MSI)); */
 
-    /* L2 INTC interrupts */
+    /* L2 INTC interrupts - DISABLED (unimplemented devices have no IRQs) */
+#if 0
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->l2_intc_v3d), 0,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_L2_INT_V3D));
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->l2_intc_rp1), 0,
@@ -339,16 +348,21 @@ static void bcm2712_realize(DeviceState *dev, Error **errp)
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_L2_INT_AO));
     sysbus_connect_irq(SYS_BUS_DEVICE(&ps->l2_intc_hdmi0), 0,
                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_L2_INT_HDMI0));
+#endif
 
-    /* HDMI controller interrupts */
-                       sysbus_connect_irq(SYS_BUS_DEVICE(&ps->hdmi0), 0,
-                                          qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_HDMI0));
-                       sysbus_connect_irq(SYS_BUS_DEVICE(&ps->hdmi1), 0,
-                                          qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_HDMI1));
+    /* HDMI controller interrupts - DISABLED */
+#if 0
+    sysbus_connect_irq(SYS_BUS_DEVICE(&ps->hdmi0), 0,
+                       qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_HDMI0));
+    sysbus_connect_irq(SYS_BUS_DEVICE(&ps->hdmi1), 0,
+                       qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_HDMI1));
+#endif
 
-                       /* Thermal sensor interrupt */
-                       sysbus_connect_irq(SYS_BUS_DEVICE(&ps->thermal), 0,
-                                          qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_THERMAL));
+    /* Thermal sensor interrupt - DISABLED (BCM2835 thermal has no IRQ) */
+#if 0
+    sysbus_connect_irq(SYS_BUS_DEVICE(&ps->thermal), 0,
+                       qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_THERMAL));
+#endif
 
                        /* DMA remap region: 0xc0000000 -> 0x00000000 (30-bit DMA) */
                        memory_region_init_alias(&ps->dma_remap_mr, OBJECT(s), "dma-remap",

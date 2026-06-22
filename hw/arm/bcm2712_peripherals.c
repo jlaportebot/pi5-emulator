@@ -83,7 +83,7 @@ static void bcm2712_peripherals_init(Object *obj)
 
     /* Use parent's peri_mr (s_base->peri_mr) which is sized at 256MB via bc_base->peri_size.
      * Do NOT create a separate peri_mr or call sysbus_init_mmio - the parent's peri_mr
-     * will be mapped at peri_base (0x7C000000) by the base class. */
+     * is already registered as mmio region 0 by the base class. */
 
     /* EMMC2 */
     object_initialize_child(obj, "emmc2", &s->emmc2, TYPE_SYSBUS_SDHCI);
@@ -195,8 +195,8 @@ static void bcm2712_peripherals_realize(DeviceState *dev, Error **errp)
 
     /* Map peripherals into GPU address space */
     memory_region_init_alias(&s->peri_alias_mr, OBJECT(s),
-                             "bcm2712-peripherals", &s->peri_mr, 0,
-                             memory_region_size(&s->peri_mr));
+                             "bcm2712-peripherals-gpu", &s_base->peri_mr, 0,
+                             memory_region_size(&s_base->peri_mr));
     /* Remove peri_alias_mr from its container if any */
     if (s->peri_alias_mr.container) {
         memory_region_del_subregion(s->peri_alias_mr.container, &s->peri_alias_mr);
@@ -440,7 +440,8 @@ static void bcm2712_peripherals_realize(DeviceState *dev, Error **errp)
                                               GIC_SPI_INTERRUPT_XHCI));
 #endif
 
-    /* PCIe controllers interrupts */
+    /* PCIe controllers interrupts - DISABLED (devices not implemented) */
+#if 0
     sysbus_connect_irq(SYS_BUS_DEVICE(&s->pcie0), 0,
                        qdev_get_gpio_in_named(DEVICE(&s_base->ic),
                                               BCM2835_IC_GPU_IRQ,
@@ -519,6 +520,7 @@ static void bcm2712_peripherals_realize(DeviceState *dev, Error **errp)
                        qdev_get_gpio_in_named(DEVICE(&s_base->ic),
                                               BCM2835_IC_GPU_IRQ,
                                               GIC_SPI_INTERRUPT_AUDIO));
+#endif
 
     /* Thermal sensor (BCM2835 compatible) */
     object_initialize_child(OBJECT(dev), "thermal", &s->thermal, TYPE_BCM2835_THERMAL);
