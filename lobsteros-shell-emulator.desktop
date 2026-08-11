@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LobsterOS Pi 5 Emulator (Shell)
+GenericName=Pi 5 Emulator Headless Shell
+Comment=Run LobsterOS bare-metal Rust OS in QEMU with serial console only (no GUI)
+Exec=env DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 /home/john/pi5-emulator-repo/run_lobsteros_shell.sh
+Icon=utilities-terminal
+Terminal=true
+Categories=System;Emulator;Development;ConsoleOnly;
+StartupNotify=true
+Keywords=qemu;emulator;raspberry pi;arm64;bcm2712;lobsteros;rust;bare-metal;shell;console;

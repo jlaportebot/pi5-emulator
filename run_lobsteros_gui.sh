@@ -8,7 +8,7 @@ for f in \
     "/mnt/data/sd-overflow/LobsterOS/lobster-os/build/kernel8.img" \
     "/home/john/pi5-emulator-repo/bcm2712-rpi-5-b.dtb"; do
     if [ ! -f "$f" ]; then
-        zenity --error --title="LobsterOS" --text="Missing:\n$f" 2>/dev/null || echo "ERROR: Missing $f"
+        zenity --error --title="LobsterOS" --text="Missing:\\n$f" 2>/dev/null || echo "ERROR: Missing $f"
         exit 1
     fi
 done

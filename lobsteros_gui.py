@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
 """
-LobsterOS Desktop Launcher — Final Working Version
-A polished GUI application to run the Pi 5 emulator with LobsterOS.
-Click the desktop icon to launch!
-
-Architecture:
-- QEMU runs with -display gtk (resizable graphical framebuffer window)
-- QEMU serial connected via stdin/stdio so the Tk panel can send commands
-- The graphical framebuffer shows the live desktop with windows
-- The Tk panel shows serial console output for typing commands
+LobsterOS Desktop Launcher — Single unified launcher
+Opens a Tk control panel + QEMU GTK graphical framebuffer window.
+Click "Launch" to boot LobsterOS with full GUI desktop.
 """
 
 import tkinter as tk
@@ -20,16 +14,18 @@ import time
 import os
 import sys
 
-# Configuration — paths to emulator components
+# ─── Configuration ─────────────────────────────────────────────────────
 QEMU_BIN = "/home/john/qemu-src/build/qemu-system-aarch64"
 KERNEL_IMG = "/mnt/data/sd-overflow/LobsterOS/lobster-os/build/kernel8.img"
 DTB_FILE = "/home/john/pi5-emulator-repo/bcm2712-rpi-5-b.dtb"
 
 
 class LobsterOSLauncher:
+    """Tk-based control panel that launches QEMU with graphical display."""
+
     def __init__(self, root):
         self.root = root
-        self.root.title("LobsterOS - Raspberry Pi 5 Emulator")
+        self.root.title("🦞 LobsterOS — Raspberry Pi 5 Emulator")
         self.root.geometry("1000x700")
         self.root.minsize(700, 500)
 
@@ -45,101 +41,105 @@ class LobsterOSLauncher:
         self.history_index = -1
 
         # Setup UI
-        self.setup_styles()
-        self.create_widgets()
-        self.setup_layout()
+        self._setup_styles()
+        self._create_widgets()
+        self._setup_layout()
+        self._setup_console_tags()
 
         # Start output processing
-        self.process_output()
+        self._poll_output()
 
         # Handle window close
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def setup_styles(self):
-        """Configure ttk styles for a modern look"""
+    # ─── Styles ─────────────────────────────────────────────────────────
+    def _setup_styles(self):
         style = ttk.Style()
-        style.theme_use('clam')
+        style.theme_use("clam")
 
-        bg_dark = "#1e1e2e"
-        bg_medium = "#282838"
-        bg_light = "#353545"
-        fg_main = "#e0e0e0"
-        fg_accent = "#ff6b6b"
-        fg_green = "#4ec9b0"
-        fg_yellow = "#ffcc00"
-        fg_blue = "#5dade2"
-        fg_dim = "#888888"
+        BG_DARK = "#1a1a2e"
+        BG_MED = "#16213e"
+        BG_LIGHT = "#0f3460"
+        FG_MAIN = "#e0e0e0"
+        FG_ACCENT = "#e94560"
+        FG_GREEN = "#4ecca3"
+        FG_YELLOW = "#ffd460"
+        FG_DIM = "#888888"
 
-        self.root.configure(bg=bg_dark)
+        self.root.configure(bg=BG_DARK)
 
-        style.configure("TFrame", background=bg_dark)
-        style.configure("TLabel", background=bg_dark, foreground=fg_main,
+        style.configure("TFrame", background=BG_DARK)
+        style.configure("TLabel", background=BG_DARK, foreground=FG_MAIN,
                          font=("Segoe UI", 10))
         style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"),
-                         foreground=fg_accent)
+                         foreground=FG_ACCENT)
         style.configure("Subtitle.TLabel", font=("Segoe UI", 9),
-                         foreground=fg_dim)
+                         foreground=FG_DIM)
         style.configure("Status.TLabel", font=("Segoe UI", 10, "bold"))
-        style.configure("TButton", font=("Segoe UI", 10), padding=8)
+        style.configure("TButton", font=("Segoe UI", 10), padding=6)
         style.map("TButton",
-                  background=[("active", fg_accent), ("!active", bg_medium)],
-                  foreground=[("active", "#ffffff"), ("!active", fg_main)])
+                  background=[("active", FG_ACCENT), ("!active", BG_MED)],
+                  foreground=[("active", "#fff"), ("!active", FG_MAIN)])
         style.configure("Accent.TButton", font=("Segoe UI", 11, "bold"))
         style.map("Accent.TButton",
-                  background=[("active", "#ff5252"), ("!active", fg_accent)],
-                  foreground=[("active", "#ffffff"), ("!active", "#ffffff")])
-        style.configure("TEntry", fieldbackground=bg_light,
-                         foreground=fg_main, bordercolor=bg_light)
-        style.configure("Horizontal.TProgressbar", background=fg_accent,
-                         troughcolor=bg_medium)
+                  background=[("active", "#c2364e"), ("!active", FG_ACCENT)],
+                  foreground=[("active", "#fff"), ("!active", "#fff")])
+        style.configure("TEntry", fieldbackground=BG_LIGHT,
+                         foreground=FG_MAIN, bordercolor=BG_LIGHT)
+        style.configure("Horizontal.TProgressbar", background=FG_ACCENT,
+                         troughcolor=BG_MED)
 
         self.colors = {
-            "bg": bg_dark, "fg": fg_main, "accent": fg_accent,
-            "green": fg_green, "yellow": fg_yellow, "blue": fg_blue,
-            "dim": fg_dim, "error": "#ff5252", "boot": "#888888",
-            "kernel": "#aaaaaa", "shell": "#ffffff", "user_input": fg_yellow,
+            "bg": BG_DARK, "fg": FG_MAIN, "accent": FG_ACCENT,
+            "green": FG_GREEN, "yellow": FG_YELLOW, "blue": "#54a0ff",
+            "dim": FG_DIM, "error": "#ff5252", "boot": "#7a7a9a",
+            "kernel": "#e94560", "shell": "#ffffff", "user_input": FG_YELLOW,
         }
 
-    def font_exists(self, font_name):
+    def _font_exists(self, name):
         try:
-            import tkinter.font as tkfont
-            return font_name in tkfont.families()
+            import tkinter.font as f
+            return name in f.families()
         except Exception:
             return False
 
-    def get_mono_font(self, bold=False):
-        for name in ["JetBrains Mono", "Consolas", "DejaVu Sans Mono",
+    def _get_mono_font(self, bold=False):
+        for name in ["JetBrains Mono", "DejaVu Sans Mono",
                      "Liberation Mono", "Courier"]:
-            if self.font_exists(name):
+            if self._font_exists(name):
                 style = "bold" if bold else "normal"
                 return (name, 10, style)
         return ("Courier", 10, "bold" if bold else "normal")
 
-    def create_widgets(self):
-        """Create all UI widgets"""
-        self.main_frame = ttk.Frame(self.root, padding=10)
+    # ─── Widgets ────────────────────────────────────────────────────────
+    def _create_widgets(self):
+        self.main_frame = ttk.Frame(self.root, padding=12)
 
         # Header
         self.header_frame = ttk.Frame(self.main_frame)
         self.title_label = ttk.Label(self.header_frame, text="🦞 LobsterOS",
                                      style="Title.TLabel")
-        self.subtitle_label = ttk.Label(self.header_frame,
-                                         text="Raspberry Pi 5 Emulator • Bare-metal Rust OS",
-                                         style="Subtitle.TLabel")
+        self.subtitle_label = ttk.Label(
+            self.header_frame,
+            text="Raspberry Pi 5 Emulator • Bare-metal Rust OS • BCM2712 (4× Cortex-A76, 4 GB)",
+            style="Subtitle.TLabel"
+        )
         self.status_label = ttk.Label(self.header_frame, text="● Ready to launch",
-                                       style="Status.TLabel",
-                                       foreground=self.colors["green"])
-        self.info_label = ttk.Label(self.header_frame,
-            text="Launch opens two windows: QEMU graphical desktop (resizable) + this serial console for typing",
-            style="Subtitle.TLabel")
+                                      style="Status.TLabel",
+                                      foreground=self.colors["green"])
+        self.info_label = ttk.Label(
+            self.header_frame,
+            text="Launch opens a QEMU GTK window showing the graphical desktop. Type commands in the serial console below.",
+            style="Subtitle.TLabel"
+        )
 
         # Console area
         self.console_frame = ttk.Frame(self.main_frame)
         self.console = scrolledtext.ScrolledText(
             self.console_frame, wrap=tk.WORD,
-            font=self.get_mono_font(),
-            bg=self.colors["bg"], fg=self.colors["fg"],
-            insertbackground=self.colors["fg"],
+            font=self._get_mono_font(),
+            bg="#0d0d1a", fg="#c8c8d0",
+            insertbackground="#fff",
             selectbackground=self.colors["accent"],
             selectforeground="#ffffff",
             borderwidth=0, highlightthickness=1,
@@ -147,58 +147,99 @@ class LobsterOSLauncher:
             padx=10, pady=10
         )
         self.console.config(state=tk.DISABLED)
-        self.setup_console_tags()
 
         # Input area
         self.input_frame = ttk.Frame(self.main_frame)
         self.input_label = ttk.Label(self.input_frame, text="lobster>",
                                      foreground=self.colors["accent"],
-                                     font=self.get_mono_font())
-        self.input_entry = ttk.Entry(self.input_frame, font=self.get_mono_font())
-        self.input_entry.bind("<Return>", self.on_send_command)
-        self.input_entry.bind("<Up>", self.on_history_up)
-        self.input_entry.bind("<Down>", self.on_history_down)
+                                     font=self._get_mono_font())
+        self.input_entry = ttk.Entry(self.input_frame,
+                                     font=self._get_mono_font())
+        self.input_entry.bind("<Return>", self._on_send)
+        self.input_entry.bind("<Up>", self._history_up)
+        self.input_entry.bind("<Down>", self._history_down)
         self.send_button = ttk.Button(self.input_frame, text="Send",
-                                      command=self.on_send_command,
+                                      command=self._on_send,
                                       style="Accent.TButton", width=8)
         self.clear_button = ttk.Button(self.input_frame, text="Clear",
-                                       command=self.clear_console, width=8)
+                                       command=self._clear_console, width=8)
 
         # Control buttons
         self.control_frame = ttk.Frame(self.main_frame)
-        self.launch_button = ttk.Button(self.control_frame,
-                                        text="🚀 Launch LobsterOS",
-                                        command=self.launch_emulator,
-                                        style="Accent.TButton")
-        self.stop_button = ttk.Button(self.control_frame, text="⏹ Stop",
-                                      command=self.stop_emulator, state=tk.DISABLED)
-        self.restart_button = ttk.Button(self.control_frame, text="🔄 Restart",
-                                         command=self.restart_emulator, state=tk.DISABLED)
+        self.launch_button = ttk.Button(
+            self.control_frame, text="🚀 Launch LobsterOS",
+            command=self._launch, style="Accent.TButton")
+        self.stop_button = ttk.Button(
+            self.control_frame, text="⏹ Stop",
+            command=self._stop, state=tk.DISABLED)
+        self.restart_button = ttk.Button(
+            self.control_frame, text="🔄 Restart",
+            command=self._restart, state=tk.DISABLED)
         self.progress = ttk.Progressbar(self.control_frame,
-                                         mode="indeterminate", length=200)
+                                        mode="indeterminate", length=200)
 
         # Quick command buttons
         self.quick_frame = ttk.Frame(self.main_frame)
         self.quick_label = ttk.Label(self.quick_frame, text="Quick commands:",
-                                     style="Subtitle.TLabel")
+                                    style="Subtitle.TLabel")
         quick_commands = [
-            ("help", "help"), ("version", "version"), ("mem", "mem"),
-            ("ps", "ps"), ("cpu", "cpu"), ("uptime", "uptime"),
+            ("help", "help"), ("version", "version"),
+            ("mem", "mem"), ("ps", "ps"),
+            ("cpu", "cpu"), ("uptime", "uptime"),
             ("whoami", "whoami"), ("clear", "clear"),
         ]
         self.quick_buttons = []
         for label, cmd in quick_commands:
             btn = ttk.Button(self.quick_frame, text=label,
-                             command=lambda c=cmd: self.send_quick_command(c),
+                             command=lambda c=cmd: self._quick(c),
                              width=10)
-            self.quick_buttons.append((btn, cmd))
+            self.quick_buttons.append(btn)
 
-    def setup_console_tags(self):
+    def _setup_layout(self):
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Header
+        self.header_frame.pack(fill=tk.X, pady=(0, 10))
+        self.title_label.pack(anchor=tk.W)
+        self.subtitle_label.pack(anchor=tk.W)
+        self.info_label.pack(anchor=tk.W, pady=(2, 0))
+        self.status_label.pack(anchor=tk.W, pady=(5, 0))
+
+        # Console
+        self.console_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.console.pack(fill=tk.BOTH, expand=True)
+
+        # Input
+        self.input_frame.pack(fill=tk.X, pady=(0, 10))
+        self.input_label.pack(side=tk.LEFT, padx=(0, 5))
+        self.input_entry.pack(side=tk.LEFT, fill=tk.X, expand=True,
+                              padx=(0, 5))
+        self.send_button.pack(side=tk.LEFT, padx=(0, 5))
+        self.clear_button.pack(side=tk.LEFT)
+
+        # Controls
+        self.control_frame.pack(fill=tk.X, pady=(0, 10))
+        self.launch_button.pack(side=tk.LEFT, padx=(0, 10))
+        self.stop_button.pack(side=tk.LEFT, padx=(0, 10))
+        self.restart_button.pack(side=tk.LEFT, padx=(0, 10))
+        self.progress.pack(side=tk.LEFT, padx=(20, 0))
+
+        # Quick commands
+        self.quick_frame.pack(fill=tk.X)
+        self.quick_label.pack(anchor=tk.W, pady=(0, 5))
+        quick_row = ttk.Frame(self.quick_frame)
+        quick_row.pack(fill=tk.X)
+        for btn in self.quick_buttons:
+            btn.pack(side=tk.LEFT, padx=(0, 5))
+
+    # ─── Console tags ───────────────────────────────────────────────────
+    def _setup_console_tags(self):
+        mono = self._get_mono_font()
         tags = {
             "boot": {"foreground": self.colors["boot"]},
             "kernel": {"foreground": self.colors["kernel"]},
             "shell": {"foreground": self.colors["shell"],
-                      "font": self.get_mono_font(bold=True)},
+                      "font": self._get_mono_font(bold=True)},
             "user_input": {"foreground": self.colors["user_input"]},
             "success": {"foreground": self.colors["green"]},
             "error": {"foreground": self.colors["error"]},
@@ -206,43 +247,11 @@ class LobsterOSLauncher:
             "info": {"foreground": self.colors["blue"]},
             "dim": {"foreground": self.colors["dim"]},
         }
-        for tag, config in tags.items():
-            self.console.tag_config(tag, **config)
+        for tag, cfg in tags.items():
+            self.console.tag_config(tag, **cfg)
 
-    def setup_layout(self):
-        self.main_frame.pack(fill=tk.BOTH, expand=True)
-        self.header_frame.pack(fill=tk.X, pady=(0, 10))
-        self.title_label.pack(anchor=tk.W)
-        self.subtitle_label.pack(anchor=tk.W)
-        self.info_label.pack(anchor=tk.W, pady=(2, 0))
-
-        status_row = ttk.Frame(self.header_frame)
-        status_row.pack(fill=tk.X, pady=(5, 0))
-        self.status_label.pack(side=tk.LEFT)
-
-        self.console_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        self.console.pack(fill=tk.BOTH, expand=True)
-
-        self.input_frame.pack(fill=tk.X, pady=(0, 10))
-        self.input_label.pack(side=tk.LEFT, padx=(0, 5))
-        self.input_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.send_button.pack(side=tk.LEFT, padx=(0, 5))
-        self.clear_button.pack(side=tk.LEFT)
-
-        self.control_frame.pack(fill=tk.X, pady=(0, 10))
-        self.launch_button.pack(side=tk.LEFT, padx=(0, 10))
-        self.stop_button.pack(side=tk.LEFT, padx=(0, 10))
-        self.restart_button.pack(side=tk.LEFT, padx=(0, 10))
-        self.progress.pack(side=tk.LEFT, padx=(20, 0))
-
-        self.quick_frame.pack(fill=tk.X)
-        self.quick_label.pack(anchor=tk.W, pady=(0, 5))
-        quick_row = ttk.Frame(self.quick_frame)
-        quick_row.pack(fill=tk.X)
-        for btn, _ in self.quick_buttons:
-            btn.pack(side=tk.LEFT, padx=(0, 5))
-
-    def append_console(self, text, tag=None):
+    # ─── Console helpers ────────────────────────────────────────────────
+    def _append(self, text, tag=None):
         self.console.config(state=tk.NORMAL)
         if tag:
             self.console.insert(tk.END, text, tag)
@@ -251,30 +260,12 @@ class LobsterOSLauncher:
         self.console.see(tk.END)
         self.console.config(state=tk.DISABLED)
 
-    def clear_console(self):
+    def _clear_console(self):
         self.console.config(state=tk.NORMAL)
         self.console.delete(1.0, tk.END)
         self.console.config(state=tk.DISABLED)
 
-    def process_output(self):
-        try:
-            while True:
-                line = self.output_queue.get_nowait()
-                if line == "__PROCESS_ENDED__":
-                    self.on_process_ended()
-                    break
-                elif line == "__BOOT_COMPLETE__":
-                    self.on_boot_complete()
-                    break
-                else:
-                    self.colorize_and_append(line)
-        except queue.Empty:
-            pass
-        finally:
-            self.root.after(50, self.process_output)
-
-    def colorize_and_append(self, line):
-        tag = None
+    def _colorize(self, line):
         boot_keywords = [
             "[boot]", "[dtb]", "[gic]", "[timer]", "[mmu]", "[frame-alloc]",
             "[heap]", "[vmem]", "[display]", "[fb]", "[fs]", "[users]",
@@ -283,12 +274,14 @@ class LobsterOSLauncher:
             "[editor]", "[settings]", "[config]", "[syslog]", "[panic]",
             "[serial]", "[hw]", "[compositor]", "[panel]", "[power]",
             "[audio]", "[gpio]", "[bt]", "[shell]", "[wm::input]",
+            "[theme]", "[klog]",
         ]
+        tag = None
         if any(kw in line for kw in boot_keywords):
             tag = "boot"
         elif any(kw in line for kw in
                  ["LobsterOS", "Bare-metal", "Quad-core", "Raspberry Pi 5",
-                  "╔", "║", "╚"]):
+                  "╔", "║", "╚", "═══"]):
             tag = "kernel"
         elif "lobster>" in line:
             tag = "shell"
@@ -304,11 +297,30 @@ class LobsterOSLauncher:
         elif any(kw in line for kw in
                  ["Memory Statistics", "Total:", "Used:", "Free:"]):
             tag = "info"
-        self.append_console(line, tag)
+        self._append(line, tag)
 
-    def on_boot_complete(self):
+    # ─── Output polling ────────────────────────────────────────────────
+    def _poll_output(self):
+        try:
+            while True:
+                item = self.output_queue.get_nowait()
+                if item == "__PROCESS_ENDED__":
+                    self._on_ended()
+                    break
+                elif item == "__BOOT_COMPLETE__":
+                    self._on_boot_complete()
+                    break
+                else:
+                    self._colorize(item)
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(50, self._poll_output)
+
+    def _on_boot_complete(self):
         self.boot_complete = True
         self.progress.stop()
+        self.progress.pack_forget()
         self.status_label.config(text="● Running — Shell ready",
                                  foreground=self.colors["green"])
         self.input_entry.config(state=tk.NORMAL)
@@ -316,61 +328,77 @@ class LobsterOSLauncher:
         self.stop_button.config(state=tk.NORMAL)
         self.restart_button.config(state=tk.NORMAL)
         self.launch_button.config(state=tk.DISABLED)
-        for btn, _ in self.quick_buttons:
+        for btn in self.quick_buttons:
             btn.config(state=tk.NORMAL)
         self.input_entry.focus()
 
-    def on_process_ended(self):
+    def _on_ended(self):
         self.running = False
         self.boot_complete = False
         self.progress.stop()
-        self.status_label.config(text="● Stopped", foreground=self.colors["dim"])
+        self.progress.pack_forget()
+        self.status_label.config(text="● Stopped",
+                                 foreground=self.colors["dim"])
         self.input_entry.config(state=tk.DISABLED)
         self.send_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.DISABLED)
         self.restart_button.config(state=tk.DISABLED)
         self.launch_button.config(state=tk.NORMAL)
-        for btn, _ in self.quick_buttons:
+        for btn in self.quick_buttons:
             btn.config(state=tk.DISABLED)
-        self.append_console("\n[Emulator stopped]\n", "dim")
+        self._append("\n[Emulator stopped]\n", "dim")
 
-    def launch_emulator(self):
+    # ─── Launch ─────────────────────────────────────────────────────────
+    def _check_files(self):
         for path, name in [(QEMU_BIN, "QEMU binary"),
                            (KERNEL_IMG, "Kernel image"),
                            (DTB_FILE, "DTB file")]:
             if not os.path.exists(path):
-                messagebox.showerror("Missing File", f"{name} not found:\n{path}")
-                return
+                messagebox.showerror("Missing File",
+                                     f"{name} not found:\n{path}")
+                return False
+        return True
 
-        self.clear_console()
-        self.append_console("╔══════════════════════════════════════════════════════════════╗\n",
-                            "kernel")
-        self.append_console("║  🦞 LobsterOS - Raspberry Pi 5 Emulator                      ║\n",
-                            "kernel")
-        self.append_console("║  QEMU BCM2712 (4× Cortex-A72, 4GB RAM) — Graphical Mode      ║\n",
-                            "kernel")
-        self.append_console("╚══════════════════════════════════════════════════════════════╝\n\n",
-                            "kernel")
-        self.append_console("Opening QEMU GTK window (graphical desktop)...\n", "info")
-        self.append_console("Type commands in the input box below — they go to the serial console.\n", "info")
-        self.append_console("The QEMU window shows the graphical desktop with windows.\n\n", "info")
+    def _launch(self):
+        if not self._check_files():
+            return
+
+        self._clear_console()
+        self._append(
+            "╔═══════════════════════════════════════════════════════════════╗\n",
+            "kernel")
+        self._append(
+            "║  🦞 LobsterOS — Raspberry Pi 5 Emulator                        ║\n",
+            "kernel")
+        self._append(
+            "║  BCM2712 • 4× Cortex-A76 • 4 GB RAM • Custom QEMU             ║\n",
+            "kernel")
+        self._append(
+            "╚═══════════════════════════════════════════════════════════════╝\n\n",
+            "kernel")
+        self._append("Opening QEMU GTK window (graphical desktop)...\n",
+                     "info")
+        self._append("Type commands in the input box below — they go to the serial console.\n\n",
+                     "info")
 
         self.running = True
         self.boot_complete = False
         self.boot_start_time = time.time()
+        self.progress.pack(fill=tk.X, pady=(0, 6))
         self.progress.start(100)
         self.status_label.config(text="● Booting LobsterOS...",
                                  foreground=self.colors["yellow"])
         self.launch_button.config(state=tk.DISABLED)
         self.input_entry.config(state=tk.DISABLED)
         self.send_button.config(state=tk.DISABLED)
-        for btn, _ in self.quick_buttons:
+        for btn in self.quick_buttons:
             btn.config(state=tk.DISABLED)
 
-        thread = threading.Thread(target=self.run_qemu, daemon=True)
+        thread = threading.Thread(target=self._run_qemu, daemon=True)
         thread.start()
 
-    def run_qemu(self):
+    def _run_qemu(self):
+        """Run QEMU with GTK graphical display in a background thread."""
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
         env.setdefault("WAYLAND_DISPLAY", "wayland-0")
@@ -380,7 +408,7 @@ class LobsterOSLauncher:
             QEMU_BIN,
             "-M", "raspi5b,graphics=on",
             "-m", "4G",
-            "-cpu", "cortex-a72",
+            "-cpu", "cortex-a76",
             "-kernel", KERNEL_IMG,
             "-dtb", DTB_FILE,
             "-serial", "stdio",
@@ -408,7 +436,13 @@ class LobsterOSLauncher:
                         line = self.process.stdout.readline()
                         if line:
                             self.output_queue.put(line)
+                            # Detect boot completion
                             if not self.boot_complete and "lobster>" in line:
+                                time.sleep(0.3)
+                                self.output_queue.put("__BOOT_COMPLETE__")
+                            # Fallback: if boot takes >25 seconds, assume it's ready
+                            elif not self.boot_complete and \
+                                    (time.time() - self.boot_start_time) > 25:
                                 time.sleep(0.3)
                                 self.output_queue.put("__BOOT_COMPLETE__")
                         else:
@@ -416,15 +450,16 @@ class LobsterOSLauncher:
                     except Exception as e:
                         self.output_queue.put(f"[Read error: {e}]\n")
                         break
-
         except Exception as e:
             self.output_queue.put(f"[Error starting QEMU: {e}]\n")
         finally:
             self.output_queue.put("__PROCESS_ENDED__\n")
 
-    def stop_emulator(self):
+    # ─── Stop / Restart ────────────────────────────────────────────────
+    def _stop(self):
         if self.process and self.process.poll() is None:
-            self.append_console("\n[Stopping emulator...]\n", "warning")
+            self._append("\n[Stopping emulator...]\n", "warning")
+            self.running = False
             self.process.terminate()
             try:
                 self.process.wait(timeout=3)
@@ -432,15 +467,17 @@ class LobsterOSLauncher:
                 self.process.kill()
                 self.process.wait()
 
-    def restart_emulator(self):
-        self.stop_emulator()
+    def _restart(self):
+        self._stop()
         time.sleep(0.5)
-        self.launch_emulator()
+        self._launch()
 
-    def on_send_command(self, event=None):
+    # ─── Command input ──────────────────────────────────────────────────
+    def _on_send(self, event=None):
         cmd = self.input_entry.get().strip()
-        if cmd and self.running and self.process and self.process.poll() is None:
-            self.append_console(f"lobster> {cmd}\n", "user_input")
+        if cmd and self.running and self.process and \
+                self.process.poll() is None:
+            self._append(f"lobster> {cmd}\n", "user_input")
             try:
                 if self.process.stdin:
                     self.process.stdin.write(cmd + "\n")
@@ -448,12 +485,12 @@ class LobsterOSLauncher:
                     self.command_history.append(cmd)
                     self.history_index = len(self.command_history)
             except Exception as e:
-                self.append_console(f"[Send error: {e}]\n", "error")
+                self._append(f"[Send error: {e}]\n", "error")
         self.input_entry.delete(0, tk.END)
 
-    def send_quick_command(self, cmd):
+    def _quick(self, cmd):
         if self.running and self.process and self.process.poll() is None:
-            self.append_console(f"lobster> {cmd}\n", "user_input")
+            self._append(f"lobster> {cmd}\n", "user_input")
             try:
                 if self.process.stdin:
                     self.process.stdin.write(cmd + "\n")
@@ -461,16 +498,16 @@ class LobsterOSLauncher:
                     self.command_history.append(cmd)
                     self.history_index = len(self.command_history)
             except Exception as e:
-                self.append_console(f"[Send error: {e}]\n", "error")
+                self._append(f"[Send error: {e}]\n", "error")
 
-    def on_history_up(self, event):
+    def _history_up(self, event):
         if self.command_history and self.history_index > 0:
             self.history_index -= 1
             self.input_entry.delete(0, tk.END)
             self.input_entry.insert(0, self.command_history[self.history_index])
         return "break"
 
-    def on_history_down(self, event):
+    def _history_down(self, event):
         if self.command_history and self.history_index < len(self.command_history) - 1:
             self.history_index += 1
             self.input_entry.delete(0, tk.END)
@@ -480,16 +517,23 @@ class LobsterOSLauncher:
             self.input_entry.delete(0, tk.END)
         return "break"
 
-    def on_close(self):
+    # ─── Close ──────────────────────────────────────────────────────────
+    def _on_close(self):
         if self.running:
-            if messagebox.askyesno("Confirm Exit", "Emulator is running. Stop and exit?"):
-                self.stop_emulator()
+            if messagebox.askyesno("Confirm Exit",
+                                    "Emulator is running. Stop and exit?"):
+                self._stop()
                 self.root.after(500, self.root.destroy)
         else:
             self.root.destroy()
 
 
 def main():
+    # Ensure DISPLAY is set for Tk + QEMU GTK
+    os.environ.setdefault("DISPLAY", ":0")
+    os.environ.setdefault("WAYLAND_DISPLAY", "wayland-0")
+    os.environ.setdefault("XDG_RUNTIME_DIR", "/run/user/1000")
+
     root = tk.Tk()
     app = LobsterOSLauncher(root)
     root.mainloop()
