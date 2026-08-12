@@ -1,12 +1,12 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=LobsterOS Pi 5 Emulator
-GenericName=Pi 5 Emulator
-Comment=Run LobsterOS (bare-metal Rust OS for Raspberry Pi 5) in a custom QEMU emulator
-Exec=env DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 /home/john/pi5-emulator-repo/run_lobsteros_gui.sh
+Name=LobsterOS Pi 5 Emulator (GUI)
+GenericName=Pi 5 Emulator - Graphical Desktop
+Comment=Run LobsterOS bare-metal Rust OS in QEMU with full graphical desktop (GTK display)
+Exec=/home/john/pi5-emulator-repo/run_lobsteros_gui.sh
 Icon=computer
 Terminal=false
 Categories=System;Emulator;Development;
 StartupNotify=true
-Keywords=qemu;emulator;raspberry pi;arm64;bcm2712;lobsteros;rust;bare-metal;
+Keywords=qemu;emulator;raspberry pi;arm64;bcm2712;lobsteros;rust;bare-metal;gui;desktop;
