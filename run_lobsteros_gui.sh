@@ -28,12 +28,14 @@ echo "  DTB:    $DTB"
 echo ""
 
 exec "$QEMU" \
-    -M raspi5b \
+    -M raspi5b,graphics=on \
     -m 4G \
-    -cpu cortex-a72 \
+    -cpu cortex-a76 \
     -kernel "$KERNEL" \
     -dtb "$DTB" \
-    -display gtk,show-cursor=on \
-    -serial null \
+    -display gtk,show-tabs=off,show-menubar=off,show-cursor=on,grab-on-hover=on \
+    -device usb-mouse \
+    -device usb-kbd \
+    -serial stdio \
     -no-reboot \
     -no-shutdown
