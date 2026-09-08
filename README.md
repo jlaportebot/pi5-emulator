@@ -9,16 +9,6 @@
 
 ---
 
-## 🎬 Acceptance Demo
-
-**Watch LobsterOS running on this emulator (1:02):**
-
-https://github.com/jlaportebot/pi5-emulator/blob/main/acceptance_demo.mp4
-
-*The same demonstration video from LobsterOS — recorded entirely on this QEMU emulator. Shows: bare-metal boot → shell → C compilation → editor → Python → network → packages → GitHub CLI.*
-
----
-
 ## ✨ What Makes This Special
 
 This is **not** a generic QEMU build. It includes two custom MMIO devices that bridge the emulator to the host:
