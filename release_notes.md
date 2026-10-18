@@ -82,3 +82,21 @@ Final acceptance (measured live, single boot, zero exceptions):
 boot→shell ~2s; `cc` compiles via host cross-gcc, spawns a user process,
 exit(3) reaped and reported; `$?` = 3; `free` shows 4181616 KB free;
 uptime advances in real time; GUI desktop boots graphically.
+
+## r8 (2026-10-18 night): PERSISTENT STORAGE — files survive reboots
+
+- New **lobster-disk** paravirtual block device (QEMU, 0x7d200000): host-backed
+  raw image attached via `LBST_DISKIMG`, one MMIO command per 512-byte block.
+- 64MB ext2 `lobsteros.img` ships in the repo with a Debian-style layout
+  (/etc with motd+passwd+pkg/repos.conf, /home/user, /bin, /var, /usr, ...).
+- Kernel mounts it at **/sd** at boot; lazy directory expansion; new files
+  created in the guest are allocated in ext2 (inode + dir entry + data) and
+  written through on close; existing files update in place.
+- Fixed on the way: two ext2 inode-bitmap panics (512B cache vs 1024B
+  block_size slice), and a directory-i_size bug that made appended entries
+  invisible across reboots.
+
+**Verified live, two fresh boots:**
+`echo "PERSIST-FINAL" > /sd/home/user/saved.txt` (boot 1) →
+`cat /sd/home/user/saved.txt` → `PERSIST-FINAL` (boot 2). Host image
+inspection (strings/debugfs) confirms the bytes on disk.

@@ -47,6 +47,12 @@ Ctrl+A X to quit QEMU.  Ctrl+C to interrupt a running program.
 EOF
 echo ""
 
+# ── persistent disk (optional): export LBST_DISKIMG before this script to attach one ──
+DISK_IMAGE="${REPO}/lobsteros.img"
+if [ -f "$DISK_IMAGE" ]; then
+    export LBST_DISKIMG="$DISK_IMAGE"
+fi
+
 # ── launch ──────────────────────────────────────────────────────────────────
 # NOTE: raspi5b machine requires >= 4 vCPUs; omit -smp to use the default 4.
 exec "$QEMU" \
