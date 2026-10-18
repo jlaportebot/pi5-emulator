@@ -54,3 +54,31 @@ favor of the later-mapped device, so curl/wget responses returned the serial
 device's registers (zeros + `LBUF` magic) instead of the HTTP body. Moved to
 0x7d100000. Verified live: `curl http://example.com` now prints the real
 578-byte HTML page; seq/uptime/zero-exceptions all still pass.
+
+## r5–r7 (2026-10-18 evening): full OS pipeline working end to end
+
+- **Compile → run → exit → report loop**: fixed the cooperative run-and-wait
+  exit path with a naked-asm resume trampoline (saves/restores x19-x30 + SP;
+  `.Lcoop_resume` label). Previously the exit eret'd into the kernel caller
+  with no register state restored → wild branches → silent panic-reboot
+  (masked as a "fresh boot" in earlier tests). Exit codes now flow correctly:
+  `cc file.c -run` reports `process exited with code N` and propagates through
+  `$?` (sh semantics).
+- Root-caused the recurring EC=0 UNDEF storms: `msr SP_EL1` while SP_EL1 is the
+  *active* bank is architecturally UNDEFINED — fault confirmed at 0xc00b0 via
+  objdump.
+- **Shell redirection**: `>` and `>>` now actually work for builtins (ShellOut
+  sink honoring file/pipe), with new `O_APPEND` support in the VFS (appends
+  extend instead of overwrite) and a sh-style quote-aware tokenizer.
+- **VFS boot layout**: fresh boots create /bin /etc /tmp /root /home /var /usr.
+- **GUI verified live**: the GTK launcher boots into a graphical desktop with
+  terminal, calculator, and process-manager windows on the custom BCM2712
+  display stack (screenshot-verified via grim).
+- **bulk-serial relocation**: lobster-serial moved to 0x7d100000 — its old
+  0x7d00a000 mapping shadowed lobster-net's response window (curl responses
+  were reading the serial device's registers). curl now returns real bodies.
+
+Final acceptance (measured live, single boot, zero exceptions):
+boot→shell ~2s; `cc` compiles via host cross-gcc, spawns a user process,
+exit(3) reaped and reported; `$?` = 3; `free` shows 4181616 KB free;
+uptime advances in real time; GUI desktop boots graphically.
