@@ -45,3 +45,12 @@ consistent SP_EL1 bank.
 - Kernel: https://github.com/jlaportebot/lobster-os (commits fa47ea8, f77133a, cdd2a48)
 - QEMU overlay: https://github.com/jlaportebot/lobster-qemu
 - Launchers: run_lobsteros_shell.sh (serial), run_lobsteros_gui.sh (GTK desktop)
+
+## r4 hotfix (later 10-18): bulk-serial shadowed lobster-net
+
+The new lobster-serial device was mapped at 0x7d00a000 — inside lobster-net's
+MMIO region (its +0x1000 response-data window). QEMU resolved the overlap in
+favor of the later-mapped device, so curl/wget responses returned the serial
+device's registers (zeros + `LBUF` magic) instead of the HTTP body. Moved to
+0x7d100000. Verified live: `curl http://example.com` now prints the real
+578-byte HTML page; seq/uptime/zero-exceptions all still pass.
