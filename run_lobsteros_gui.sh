@@ -3,7 +3,7 @@
 # Directly launches QEMU with GTK display (no Tkinter wrapper needed)
 cd /home/john/pi5-emulator-repo
 
-QEMU="/home/john/qemu-src/build/qemu-system-aarch64"
+QEMU="/home/john/qemu-src/build-opt/qemu-system-aarch64"
 KERNEL="/mnt/data/sd-overflow/LobsterOS/lobster-os/build/kernel8.img"
 DTB="/home/john/pi5-emulator-repo/bcm2712-rpi-5-b.dtb"
 
