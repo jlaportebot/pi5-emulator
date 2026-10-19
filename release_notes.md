@@ -291,3 +291,17 @@ present on the host disk image and loaded in a fresh boot.
   /sd/home/user/from_host.txt, reading it back byte-exact.
 - /share is now a first-class VFS location: ls/cat/editor/file-manager
   all see host-shared files. File Manager sidebar has a Share bookmark.
+
+## r25 (2026-10-19): C4/D5 AUDIO — guest sound through host speakers
+
+- New QEMU device `lobster-audio` at 0x7d400000: guest pushes 16-bit
+  mono PCM (4KiB MMIO window + LEN write); host drains a sample ring
+  via QEMU's audio core (PipeWire/ALSA/wav backends). RATE + VOL regs.
+- Guest driver + shell commands:
+    beep [freq_mHz] [ms] — integer sine synth (default A4, 300ms)
+    play <raw-pcm-file>  — play 16-bit mono 8kHz PCM from any path
+                          (works with /share → host files!)
+- Verified with `-audio wav,path=out.wav`: guest 'beep 440000 300'
+  produces a measured 437.7-440Hz tone (zero-crossing analysis, 99%
+  non-silent). Real-time host playback works the same way with any
+  backend QEMU was built with.

@@ -6,6 +6,9 @@
 #   vm.sh boot [--resume tag]   - boot the VM; --resume restores <tag> first
 #   vm.sh del <tag>             - delete a snapshot
 #
+# Audio: export LBST_AUDIO='wav,path=/tmp/vm.wav' (or any -audio opts)
+# to capture guest sound; omit for host-default.
+#
 # Snapshots live in lobsteros-overlay.qcow2 (qcow2 overlay on the pristine
 # lobsteros.img). The base image stays untouched; disk writes and VM state
 # land in the overlay.
@@ -48,6 +51,9 @@ boot)
     ensure_overlay
     ARGS=(-M raspi5b,graphics=on -m 4G -cpu cortex-a76 -kernel "$KERNEL" -dtb "$DTB"
           -display gtk -no-reboot -no-shutdown)
+    if [[ -n "${LBST_AUDIO:-}" ]]; then
+        ARGS+=(-audio "$LBST_AUDIO")
+    fi
     if [[ "${2:-}" == "--resume" ]]; then
         TAG="${3:?usage: vm.sh boot --resume <tag>}"
         ARGS+=(-loadvm "$TAG")
