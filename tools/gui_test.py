@@ -226,11 +226,63 @@ def test_resolution(vm):
     return ok_size and panel_ok
 
 
+def test_el0_app(vm):
+    """Start the EL0 GUI app, verify its window renders, click it, and
+    verify the content changes (interactive user-space process)."""
+    from PIL import Image
+    S1 = {'r':0x13,'u':0x16,'n':0x31,' ':0x39,'/':0x35,'s':0x1F,'d':0x20,
+          'g':0x22,'i':0x17,'a':0x1E,'p':0x19}
+    ok = False
+    for attempt in range(3):
+        vm.click(400, 70)             # focus terminal
+        time.sleep(0.5)
+        for ch in "run /sd/guiapp":
+            vm.key(S1[ch])
+            time.sleep(0.2)
+        vm.key(0x1C)                  # Enter
+        time.sleep(1.5)
+        vm.dump("/tmp/lb-el0-pre.ppm")
+        img = Image.open("/tmp/lb-el0-pre.ppm").convert("RGB")
+        W, H = img.size
+        def colorful(px):
+            c = img.getpixel(px)
+            return (c not in [(30,30,46),(0,0,0),(56,63,79)]
+                    and abs(c[0]-c[1]) + abs(c[1]-c[2]) > 50)
+        hits = sum(1 for y in range(630, min(810, H - 2), 3)
+                   for x in range(70, min(340, W - 2), 3)
+                   if colorful((x, y)))
+        if hits > 2000:
+            print(f"[PASS] EL0 window renders ({hits} gradient px, attempt {attempt+1})")
+            ok = True
+            break
+        print(f"[retry] EL0 window not visible yet ({hits} px)")
+    if not ok:
+        print("[FAIL] EL0 window never rendered")
+        return False
+
+    # Click the window and check the visible bands change
+    def bands(path):
+        im = Image.open(path).convert("RGB")
+        W, H = im.size
+        ys = [y for y in range(636, min(636 + 6 * 28, H - 2), 28)]
+        return [im.getpixel((min(200, W - 2), y)) for y in ys]
+    pre = bands("/tmp/lb-el0-pre.ppm")
+    vm.click(200, min(715, H - 40))
+    time.sleep(1.0)
+    vm.dump("/tmp/lb-el0-post.ppm")
+    post = bands("/tmp/lb-el0-post.ppm")
+    changed = sum(1 for a, b in zip(pre, post) if a != b)
+    need = max(2, len(pre) // 2)
+    print(f"[{'PASS' if changed >= need else 'FAIL'}] EL0 app responded to click ({changed}/{len(pre)} bands changed)")
+    return changed >= need
+
+
 TESTS = {
     "start_menu": test_start_menu,
     "clock": test_panel_clock,
     "apps": test_apps_alive,
     "resolution": test_resolution,
+    "el0_app": test_el0_app,
 }
 
 
