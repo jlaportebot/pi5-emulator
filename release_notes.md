@@ -161,3 +161,15 @@ System Monitor, Browser) now render through one themed frame — consistent
 Light/Dark-aware title bars, rounded X close buttons, drop shadows, focus
 states, and a 160ms open animation on creation. Screenshot-verified: the
 desktop reads as one cohesive polished environment.
+
+## r13 (2026-10-19): Alt-Tab switcher, file manager polish, real editor
+
+- **Alt-Tab switcher overlay**: hold Alt, press Tab — centered card with
+  window tiles (glyph + title + selection highlight), Shift+Tab reverses,
+  releasing Alt focuses the selection. `alttab` shell command for testing.
+- **File Manager rebuilt**: Places sidebar (Home/Storage/System/Temp/Root
+  with active highlight), Up/Refresh toolbar + path pill, zebra-striped
+  list with type markers and sizes, themed status bar.
+- **Real text editor** (was a QEMU stub): opens/saves persisted files via
+  /sd, line numbers, cursor, modified indicator, status line. `edit
+  <path>` opens any file on disk.
