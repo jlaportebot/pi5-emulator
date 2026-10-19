@@ -173,3 +173,13 @@ desktop reads as one cohesive polished environment.
 - **Real text editor** (was a QEMU stub): opens/saves persisted files via
   /sd, line numbers, cursor, modified indicator, status line. `edit
   <path>` opens any file on disk.
+
+## r15 (2026-10-19): panel CPU graph, window snapping, Settings app
+
+- **Panel CPU mini-graph**: 60-second sparkline in the taskbar with
+  green/yellow/red load bars (visual-verified).
+- **Window management**: double-click title bar toggles maximize;
+  drag-to-edge snaps left/right half or maximizes on top edge.
+- **Settings app**: real window with Appearance (theme + wallpaper presets
+  with swatches), Display, Network, Storage, and About pages — all showing
+  live system data. `settings` / `settings next` shell commands.
