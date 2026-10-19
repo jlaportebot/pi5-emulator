@@ -229,3 +229,15 @@ present on the host disk image and loaded in a fresh boot.
   out, fixing corruption from a past free/relink race.
 - With r17/r18: create, mkdir, rename, delete, copy, move, and
   truncating writes ALL persist across reboots.
+
+## r20 (2026-10-19): accent colors + Image Viewer + session restore
+
+- **Accent color system**: 6 presets (Nord Blue/Coral/Amber/Mint/Violet/
+  Cyan), persisted to /sd/etc/theme.conf with the theme, restored at boot,
+  live-applied to the panel CPU graph, tray bars, and selection highlights.
+- **Image Viewer**: renders real BMP images from disk (24/32-bit, top-down
+  and bottom-up rows) in a themed window with fit-scaling. Pixel-verified:
+  a generated gradient renders with exact channel sweeps.
+- **Session restore**: /sd/etc/boot_open reopens apps/windows at boot —
+  the desktop restores your everyday setup automatically.
+- New shell commands: accent, image, wins.
