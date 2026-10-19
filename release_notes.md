@@ -305,3 +305,13 @@ present on the host disk image and loaded in a fresh boot.
   produces a measured 437.7-440Hz tone (zero-crossing analysis, 99%
   non-silent). Real-time host playback works the same way with any
   backend QEMU was built with.
+
+## r27 (2026-10-19): D4 live resolution change
+
+- Guest `resolution <w> <h>` command re-negotiates the framebuffer via
+  the BCM mailbox; the QEMU display surface resizes live. Desktop
+  repaints: panel re-anchors, windows clamp on-screen.
+- Fixed gui_shell Enter/Backspace set-2 vs set-1 scancode mismatch —
+  typed commands now execute from the GUI terminal.
+- Verified: typed 'resolution 1280 720' via injected keys →
+  screendump becomes 1280x720, panel/sysmon/clock correct.
