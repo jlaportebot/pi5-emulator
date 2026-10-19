@@ -212,3 +212,10 @@ desktop reads as one cohesive polished environment.
   commands drive everything for CI.
 - Fixed a borrow-aliasing bug where the old filename silently became the
   new one before the ext2 sync.
+
+## r18 (2026-10-19): browser bookmarks + history persist (B5.2)
+
+Bookmarks star-toggle to /sd/etc/browser/bookmarks (dir auto-created,
+loaded at boot, count shown in the chrome bar) and the last-20-URL history
+persists to /sd/etc/browser/history. Verified round trip: bookmarked URL
+present on the host disk image and loaded in a fresh boot.
