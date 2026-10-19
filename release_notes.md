@@ -153,3 +153,11 @@ inspection (strings/debugfs) confirms the bytes on disk.
   history back/forward — fetching live over the host HTTP proxy. Visual
   verified: http://example.com renders "Example Domain" in the window.
 - Start menu now includes Browser (12 tiles total).
+
+## r12 (2026-10-19 early): unified window chrome across all apps
+
+All core windows (Terminal, File Manager, Calculator, Process Manager,
+System Monitor, Browser) now render through one themed frame — consistent
+Light/Dark-aware title bars, rounded X close buttons, drop shadows, focus
+states, and a 160ms open animation on creation. Screenshot-verified: the
+desktop reads as one cohesive polished environment.
