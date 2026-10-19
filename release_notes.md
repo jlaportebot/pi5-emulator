@@ -262,3 +262,18 @@ present on the host disk image and loaded in a fresh boot.
   the framebuffer existed (u32 underflow → clipped forever). Now
   re-anchored from the live fb every frame. Clock + tray verified by
   pixel analysis (4/4 dumps).
+
+## r23 (2026-10-19): D2 SNAPSHOT/RESUME — VirtualBox-style VM manager
+
+- **lobster-disk converted to QEMU BlockBackend** (was raw fd I/O):
+  accepts `-drive if=none,id=lobsterdisk,...` (qcow2, overlays, backing
+  files) AND the LBST_DISKIMG env var (json: pinned format). savevm/
+  loadvm store full machine state including the device's registers.
+- **vm.sh**: `snap <tag>` boots headless, snapshots the running desktop;
+  `boot --resume <tag>` boots straight INTO the saved desktop state
+  (no boot!); `list` / `del`. Snapshots live in
+  `lobsteros-overlay.qcow2` — the base image stays pristine.
+- Verified: 46MB snapshot; resumed VM shows the full desktop (BMP image
+  viewer 768/768 pixel-verified, panel, sysmon) with zero boot time.
+- Note: this QEMU's blk_pread/pwrite return 0 on success (not byte
+  counts) — device status logic fixed accordingly.
