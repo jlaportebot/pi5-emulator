@@ -277,3 +277,15 @@ present on the host disk image and loaded in a fresh boot.
   viewer 768/768 pixel-verified, panel, sysmon) with zero boot time.
 - Note: this QEMU's blk_pread/pwrite return 0 on success (not byte
   counts) — device status logic fixed accordingly.
+
+## r24 (2026-10-19): D3 SHARED FOLDER — host ↔ guest file exchange
+
+- New QEMU device `lobster-share` at 0x7d300000: exports a host
+  directory (LBST_SHARE env) over MMIO — stat/list/read/write/create,
+  4KiB chunked transfers, paths jailed to the share root.
+- Guest driver `lobster_share` + shell commands:
+    share              — list entries
+    share cat <f>      — print a file
+    share cp <f> <path>— copy into the guest FS (persists via ext2)
+- Verified: listing 2 host files, copying hello.txt →
+  /sd/home/user/from_host.txt, reading it back byte-exact.

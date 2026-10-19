@@ -47,6 +47,8 @@ Ctrl+A X to quit QEMU.  Ctrl+C to interrupt a running program.
 EOF
 echo ""
 
+# ── shared folder (optional): export LBST_SHARE=<host dir> to expose it in the
+#    guest as the 'share' shell commands (share / share cat / share cp). ──
 # ── persistent disk (optional): export LBST_DISKIMG before this script to attach one ──
 DISK_IMAGE="${REPO}/lobsteros.img"
 if [ -f "$DISK_IMAGE" ]; then
