@@ -315,3 +315,12 @@ present on the host disk image and loaded in a fresh boot.
   typed commands now execute from the GUI terminal.
 - Verified: typed 'resolution 1280 720' via injected keys →
   screendump becomes 1280x720, panel/sysmon/clock correct.
+
+## Final regression (2026-10-19, session end)
+
+- GUI harness: 4/4 (start menu, clock, apps, live resolution)
+- Shared folder: /share ls + cat roundtrip host→guest
+- Audio: beep renders PCM → host WAV
+- Snapshots: savevm/loadvm on qcow2 overlays
+- Storage: ext2 boot mount + session restore
+All verified with real tool output this session.
