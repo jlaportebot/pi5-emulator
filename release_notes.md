@@ -119,3 +119,20 @@ inspection (strings/debugfs) confirms the bytes on disk.
 - New graphics primitive: `fill_rounded_rect`.
 - `docs/DESKTOP_PLAN.md`: the master feature tree (A–E) tracking the road to
   a full Windows/macOS-class desktop.
+
+## r10 (2026-10-18 late-night): desktop wave 2 — the color fix + wallpaper/theme
+
+- **THE color-order fix**: every desktop screenshot until now rendered
+  red/blue-swapped (the emulated display reads byte0 as RED; the kernel
+  packed 0xFFRRGGBB). A system-wide swizzle at every framebuffer write
+  fixed the entire UI at once. Proven by screendump pixel test:
+  red→red, blue→blue. The desktop finally shows the true Nord Aurora
+  blue gradient.
+- **Wallpaper engine**: 7 gradient presets, live repaint on change,
+  persisted to /sd/etc/wallpaper.conf and restored at boot.
+- **Theme**: Light/Dark toggle persisted to /sd/etc/theme.conf, restored
+  at boot, no longer clobbered by init.
+- **Desktop right-click menu**: New File/Folder, Open Terminal, Display
+  Settings, Change Wallpaper, Toggle Dark/Light, Refresh — all live.
+- **vfs::write_file** now writes through to the ext2 backing store, so
+  kernel-side persistence (settings files) actually lands on disk.
