@@ -219,3 +219,13 @@ Bookmarks star-toggle to /sd/etc/browser/bookmarks (dir auto-created,
 loaded at boot, count shown in the chrome bar) and the last-20-URL history
 persists to /sd/etc/browser/history. Verified round trip: bookmarked URL
 present on the host disk image and loaded in a fresh boot.
+
+## r19 (2026-10-19): copy/move persist — storage ops complete
+
+- File AND recursive directory copies persist to disk (fm copy/move +
+  write_file path). Verified: files and a full notes/ directory tree
+  survive fresh boots.
+- ext2 allocator hardened: inodes still holding links are never handed
+  out, fixing corruption from a past free/relink race.
+- With r17/r18: create, mkdir, rename, delete, copy, move, and
+  truncating writes ALL persist across reboots.
