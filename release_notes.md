@@ -183,3 +183,16 @@ desktop reads as one cohesive polished environment.
 - **Settings app**: real window with Appearance (theme + wallpaper presets
   with swatches), Display, Network, Storage, and About pages — all showing
   live system data. `settings` / `settings next` shell commands.
+
+## r16 (2026-10-19): shell-in-a-window + icon selection
+
+- **Interactive shell in the Terminal window** (B1.2): with the Terminal
+  focused, GUI keyboard input types into the window — echo, backspace,
+  Enter executes through the shell, output + fresh 'lobster:/#' prompt
+  render inside the window. Visual-verified: typed 'uptime' shows command,
+  uptime output, and prompt in the window. 'gkey' shell command drives
+  the input path for CI.
+- **Desktop icon selection** (A1.3 core): click-to-select highlight
+  (click again to open), hover tint, empty-desktop click clears.
+  'iconsel' automation command. Visual-verified: selected icon shows the
+  rounded selection box, others plain.
