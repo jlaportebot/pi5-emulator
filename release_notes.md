@@ -136,3 +136,20 @@ inspection (strings/debugfs) confirms the bytes on disk.
   Settings, Change Wallpaper, Toggle Dark/Light, Refresh — all live.
 - **vfs::write_file** now writes through to the ext2 backing store, so
   kernel-side persistence (settings files) actually lands on disk.
+
+## r11 (2026-10-19 early): desktop waves 3-4 — tray popups, window chrome, BROWSER
+
+- **System tray popups**: click the clock/network/volume/battery tray icons
+  (or `tray <kind>` from the shell) — Clock popup doubles as the
+  notification center (big time, uptime, 6 most recent notifications),
+  Network popup shows link state + IP + gateway, Volume/Battery show level
+  bars.
+- **Uniform themed window chrome**: one draw_frame() for all windows —
+  themed title bar with focused/unfocused states, rounded close button,
+  shadow, rounded body — plus a 160ms open/close/minimize scale animation
+  engine. System Monitor converted; other apps convert incrementally.
+- **Lobster Browser (first web browser!)**: URL bar, Back/Fwd/Go, HTML-strip
+  renderer (block-tag line breaking, entity decoding), scrollable page,
+  history back/forward — fetching live over the host HTTP proxy. Visual
+  verified: http://example.com renders "Example Domain" in the window.
+- Start menu now includes Browser (12 tiles total).
