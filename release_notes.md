@@ -100,3 +100,22 @@ uptime advances in real time; GUI desktop boots graphically.
 `echo "PERSIST-FINAL" > /sd/home/user/saved.txt` (boot 1) →
 `cat /sd/home/user/saved.txt` → `PERSIST-FINAL` (boot 2). Host image
 inspection (strings/debugfs) confirms the bytes on disk.
+
+## r9 (2026-10-18 late): Desktop wave 1 — start menu + notifications
+
+- **Start menu** (A2.1): Windows-style app launcher — click the panel's
+  launcher button (or `menu` in the shell) to open a dark rounded panel with
+  the 🦞 LobsterOS brand header and scrollable app tiles (Terminal, Files,
+  Editor, Calculator, Sys Monitor, Processes, Settings, Network, App Store,
+  Images, About). Hover/keyboard navigation, Esc/outside-click close,
+  Enter launches; tiles focus existing windows instead of duplicates.
+  Verified visually in the live GUI.
+- **Notifications** (A2.3 core): toast cards slide in top-right with
+  severity accent bars (info/success/warning/error), auto-expire, stack,
+  and keep a 24-entry history. Persistent-disk mount now posts a toast;
+  `notify <title> <body>` shell command for testing. Verified visually.
+- **Shell automation hooks**: `menu`, `app <name>`, `notify` — driving the
+  desktop from the serial console for CI-able GUI tests.
+- New graphics primitive: `fill_rounded_rect`.
+- `docs/DESKTOP_PLAN.md`: the master feature tree (A–E) tracking the road to
+  a full Windows/macOS-class desktop.
