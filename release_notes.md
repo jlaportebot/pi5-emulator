@@ -241,3 +241,16 @@ present on the host disk image and loaded in a fresh boot.
 - **Session restore**: /sd/etc/boot_open reopens apps/windows at boot —
   the desktop restores your everyday setup automatically.
 - New shell commands: accent, image, wins.
+
+## r21 (2026-10-19): 50× desktop render speedup + timer fix
+
+- **CNTVCT uptime**: uptime was frozen in graphics boots (QEMU raspi5b
+  has no BCM2711 MMIO system timer). Now uses the ARMv8 architectural
+  counter — animations complete, clocks/monitors tick.
+- **Render pipeline**: draw_rect/fill_rect/draw_text fast paths (hoisted
+  swizzle, scanline writes) + dirty-tracking render gating (HID events
+  and window ops drive redraws; static apps don't repaint every frame).
+  wm::tick steady state: 374ms → ~6ms.
+- **30fps frame limiter** for coherent frames + lower host CPU burn.
+- **Image Viewer double-fx fix**: colors were r/b-swapped; gradient now
+  pixel-exact. Session-restore opens the viewer clear of the terminal.
