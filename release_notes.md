@@ -196,3 +196,19 @@ desktop reads as one cohesive polished environment.
   (click again to open), hover tint, empty-desktop click clears.
   'iconsel' automation command. Visual-verified: selected icon shows the
   rounded selection box, others plain.
+
+## r17 (2026-10-19): file operations persist — delete + rename
+
+- **Deletes persist**: removing a file (shell rm, FM Delete key, fm del)
+  now unlinks it in the ext2 backing store — entries stay gone across
+  reboots. Fixed a third 512/1024 bitmap slice panic in free_inode.
+- **Renames persist, correctly**: ext2 rename is now an in-place name edit
+  in the directory block (inode/type/rec_len preserved). The earlier
+  unlink+relink implementation corrupted file types; fresh-disk round
+  trips verify name, content, AND type survive rename + reboot.
+- **File Manager keyboard**: with the Files window focused — arrows
+  select, Enter opens, Backspace goes up, Delete removes (with toast),
+  F5 refreshes, 'r' quick-renames. 'fm <nav|up|sel|del|rename|ls>' shell
+  commands drive everything for CI.
+- Fixed a borrow-aliasing bug where the old filename silently became the
+  new one before the ext2 sync.
