@@ -289,3 +289,5 @@ present on the host disk image and loaded in a fresh boot.
     share cp <f> <path>— copy into the guest FS (persists via ext2)
 - Verified: listing 2 host files, copying hello.txt →
   /sd/home/user/from_host.txt, reading it back byte-exact.
+- /share is now a first-class VFS location: ls/cat/editor/file-manager
+  all see host-shared files. File Manager sidebar has a Share bookmark.
