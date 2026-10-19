@@ -190,10 +190,44 @@ def test_apps_alive(vm):
     ], "desktop windows + panel alive")
 
 
+# set-1 scancodes for the strings the harness types
+S1 = {
+    'a':0x1E,'b':0x30,'c':0x2E,'d':0x20,'e':0x12,'f':0x21,'g':0x22,'h':0x23,
+    'i':0x17,'j':0x24,'k':0x25,'l':0x26,'m':0x32,'n':0x31,'o':0x18,'p':0x19,
+    'q':0x10,'r':0x13,'s':0x1F,'t':0x14,'u':0x16,'v':0x2F,'w':0x11,'x':0x2D,
+    'y':0x15,'z':0x2C,'1':0x02,'2':0x03,'3':0x04,'4':0x05,'5':0x06,'6':0x07,
+    '7':0x08,'8':0x09,'9':0x0A,'0':0x0B,' ':0x39,'/':0x35,'.':0x34,
+}
+
+def type_string(vm, text, per_key=0.12):
+    for ch in text:
+        vm.key(S1[ch])
+        time.sleep(per_key)
+
+
+def test_resolution(vm):
+    """Click the terminal, type 'resolution 1280 720', expect the
+    screendump to become 1280x720 with a live panel."""
+    vm.click(400, 70)              # focus terminal via title bar
+    time.sleep(0.5)
+    type_string(vm, "resolution 1280 720")
+    vm.key(0x1C)                   # Enter (set-1)
+    time.sleep(3)
+    vm.dump("/tmp/lb-res.ppm")
+    from PIL import Image
+    img = Image.open("/tmp/lb-res.ppm").convert("RGB")
+    ok_size = img.size == (1280, 720)
+    print(f"[{'PASS' if ok_size else 'FAIL'}] framebuffer resized to {img.size} (want 1280x720)")
+    panel_ok = img.getpixel((640, 700)) == (13, 27, 42)
+    print(f"[{'PASS' if panel_ok else 'FAIL'}] panel re-anchored at new bottom")
+    return ok_size and panel_ok
+
+
 TESTS = {
     "start_menu": test_start_menu,
     "clock": test_panel_clock,
     "apps": test_apps_alive,
+    "resolution": test_resolution,
 }
 
 
