@@ -335,3 +335,11 @@ All verified with real tool output this session.
   the desktop stays alive.
 - Demo: /sd/guiapp (in tools/el0_gui_demo.c) draws an animated 18-band
   gradient in a real window from user space. Pixel-verified end to end.
+
+## r29 (2026-10-19): C1 input routing — EL0 apps are interactive
+
+- SYS_WIN_POLL (114) + per-window event rings; WM routes clicks to
+  user windows (press + paired release, window-relative coordinates).
+- Demo /sd/guiapp now rotates its gradient hue on clicks — verified
+  by before/after screendumps (all sampled bands shifted by the app's
+  exact +64 phase step, incl. wraparound).

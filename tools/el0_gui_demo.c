@@ -1,5 +1,5 @@
-/* EL0 GUI demo — draws an animated gradient in a user window
- * through the SYS_WIN_* syscalls, then exits. */
+/* EL0 GUI demo — animated gradient + click interactivity
+ * through the SYS_WIN_* syscalls (110-113 + poll 114). */
 
 typedef unsigned long u64;
 
@@ -24,6 +24,7 @@ static inline u64 syscall6(u64 n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f) {
 #define SYS_WIN_FILL   111
 #define SYS_WIN_FLUSH  112
 #define SYS_WIN_CLOSE  113
+#define SYS_WIN_POLL   114
 
 #define W 280
 #define H 180
@@ -36,17 +37,28 @@ void _start(void) {
         syscall6(SYS_EXIT, 1, 0, 0, 0, 0, 0);
     }
 
-    /* 18 color bands sweeping hue with every frame */
-    for (u64 frame = 0; frame < 120; frame++) {
+    u64 hue = 0; /* click-rotated phase offset */
+
+    for (u64 frame = 0; frame < 300; frame++) {
         for (u64 band = 0; band < 18; band++) {
-            u64 phase = (band * 14 + frame * 4) & 0xFF;
+            u64 phase = (band * 14 + frame * 4 + hue) & 0xFF;
             u64 r = phase;
-            u64 g = (band * 8 + frame * 2) & 0xFF;
+            u64 g = (band * 8 + frame * 2 + hue) & 0xFF;
             u64 b = 255 - phase;
             u64 color = 0xFF000000u | (r << 16) | (g << 8) | b;
             syscall6(SYS_WIN_FILL, win, 0, band * (H / 18), W, H / 18 + 1, color);
         }
         syscall6(SYS_WIN_FLUSH, win, 0, 0, 0, 0, 0);
+
+        /* Poll input: any press inside rotates the hue. */
+        for (u64 k = 0; k < 8; k++) {
+            u64 ev = syscall6(SYS_WIN_POLL, win, 0, 0, 0, 0, 0);
+            if (ev == 0 || ev == ~0UL) break;
+            if ((ev & 0xFF) == 1) {          /* press */
+                hue += 64;
+            }
+        }
+
         syscall6(SYS_SLEEP, 33, 0, 0, 0, 0, 0);
     }
 
