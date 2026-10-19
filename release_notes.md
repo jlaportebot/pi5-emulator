@@ -324,3 +324,14 @@ present on the host disk image and loaded in a fresh boot.
 - Snapshots: savevm/loadvm on qcow2 overlays
 - Storage: ext2 boot mount + session restore
 All verified with real tool output this session.
+
+## r28 (2026-10-19): C1 — EL0 user-process GUI apps
+
+- New syscalls 110-113 (win create/fill/flush/close): PID-owned window
+  registry, kernel-side backing buffers, composited with themed chrome.
+- ELF loader now handles unaligned-p_vaddr segments (first instruction
+  no longer faults on gcc-linked binaries).
+- Cooperative sleep is real time + pumps the WM: EL0 apps animate while
+  the desktop stays alive.
+- Demo: /sd/guiapp (in tools/el0_gui_demo.c) draws an animated 18-band
+  gradient in a real window from user space. Pixel-verified end to end.

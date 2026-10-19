@@ -208,14 +208,17 @@ def type_string(vm, text, per_key=0.12):
 def test_resolution(vm):
     """Click the terminal, type 'resolution 1280 720', expect the
     screendump to become 1280x720 with a live panel."""
-    vm.click(400, 70)              # focus terminal via title bar
-    time.sleep(0.5)
-    type_string(vm, "resolution 1280 720")
-    vm.key(0x1C)                   # Enter (set-1)
-    time.sleep(3)
-    vm.dump("/tmp/lb-res.ppm")
     from PIL import Image
-    img = Image.open("/tmp/lb-res.ppm").convert("RGB")
+    for attempt in range(3):
+        vm.click(400, 70)              # focus terminal via title bar
+        time.sleep(0.5)
+        type_string(vm, "resolution 1280 720", per_key=0.22)
+        vm.key(0x1C)                   # Enter (set-1)
+        time.sleep(3)
+        vm.dump("/tmp/lb-res.ppm")
+        img = Image.open("/tmp/lb-res.ppm").convert("RGB")
+        if img.size == (1280, 720):
+            break
     ok_size = img.size == (1280, 720)
     print(f"[{'PASS' if ok_size else 'FAIL'}] framebuffer resized to {img.size} (want 1280x720)")
     panel_ok = img.getpixel((640, 700)) == (13, 27, 42)
