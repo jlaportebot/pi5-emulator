@@ -254,3 +254,11 @@ present on the host disk image and loaded in a fresh boot.
 - **30fps frame limiter** for coherent frames + lower host CPU burn.
 - **Image Viewer double-fx fix**: colors were r/b-swapped; gradient now
   pixel-exact. Session-restore opens the viewer clear of the terminal.
+
+## r22 (2026-10-19): panel clock + tray fixed
+
+- The panel clock, workspace label adjacency and the network/volume/
+  battery tray never rendered: init positioned them from fb.width before
+  the framebuffer existed (u32 underflow → clipped forever). Now
+  re-anchored from the live fb every frame. Clock + tray verified by
+  pixel analysis (4/4 dumps).
