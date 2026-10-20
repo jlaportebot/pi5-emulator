@@ -343,3 +343,14 @@ All verified with real tool output this session.
 - Demo /sd/guiapp now rotates its gradient hue on clicks — verified
   by before/after screendumps (all sampled bands shifted by the app's
   exact +64 phase step, incl. wraparound).
+
+## r30 (2026-10-19): Task Manager + harness hardening
+
+- Task Manager (B6.3): merged SysMon+Process Manager into one tabbed
+  window; start-menu entry replaces both; verified tab switching.
+- GUI harness: serial typing over stdio pipe (unix-socket serial makes
+  QEMU's main loop crawl under load), expect() dump retries, el0 test
+  probes continuously + asserts a persistent white click-cross.
+- KNOWN ISSUE: HID input routing degrades after an EL0 app exits
+  (first press delivered, later events lost) — tracked for a dedicated
+  debug session.

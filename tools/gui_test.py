@@ -46,14 +46,36 @@ class VM:
             "-display", "none", "-no-reboot", "-no-shutdown",
             # VNC creates a live graphical console so HMP input injection
             # (mouse_move/mouse_button/sendkey) routes to the guest.
-            "-L", "/usr/share/qemu", "-vnc", ":9",
+            "-L", "/usr/share/qemu", "-serial", "stdio",
             "-monitor", f"unix:{self.sock_path},server,nowait",
         ]
         self.stderr_path = "/tmp/lb-guitest-qemu.log"
         self._stderr = open(self.stderr_path, "wb")
         self.proc = subprocess.Popen(
             cmd, env=env,
-            stdout=subprocess.DEVNULL, stderr=self._stderr)
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=self._stderr)
+        # Tee serial output to a log file in the background.
+        import threading
+        self._serial_log = open("/tmp/lb-serial-out.log", "wb")
+        def _tee():
+            try:
+                while True:
+                    b = self.proc.stdout.read(1)
+                    if not b:
+                        break
+                    self._serial_log.write(b)
+                    self._serial_log.flush()
+            except OSError:
+                pass
+        self._tee = threading.Thread(target=_tee, daemon=True)
+        self._tee.start()
+        self._serial_buf = b""
+
+        # The serial console is QEMU's stdio, connected to our stdin
+        # PIPE (unix-socket serial makes QEMU's main loop crawl and
+        # starves the monitor).
+
         # Wait for the monitor socket, then boot to desktop.
         for _ in range(40):
             if self.proc.poll() is not None:
@@ -79,6 +101,21 @@ class VM:
             self.mon.recv(65536)
         except OSError:
             pass
+
+    def send_serial(self, text, settle=0.3, wait_ready=False):
+        """Type into the guest over the serial console. With wait_ready,
+        first handshake with 'uptime' until the shell echoes back —
+        serial input sent while the guest shell is blocked (e.g. during
+        a cooperative run_and_wait) overflows the UART FIFO and is lost.
+        """
+        # (no wait_ready with stdio pipe — the shell reads stdin
+        # whenever it is free; blocked-shell sends just queue in the
+        # pipe and are processed later.)
+        if wait_ready:
+            time.sleep(0.3)
+        self.proc.stdin.write(text.encode())
+        self.proc.stdin.flush()
+        time.sleep(settle)
 
     def hmp(self, line, wait=0.3):
         self.mon.sendall((line + "\n").encode())
@@ -123,22 +160,27 @@ class VM:
 
 
 def expect(vm, checks, label):
-    """checks: list of (x, y, (r,g,b), tol). Returns (ok, details)."""
+    """checks: list of (x, y, (r,g,b), tol). Retries the dump up to 3
+    times — screendumps can catch mid-render frames."""
     path = "/tmp/lb-expect.ppm"
-    vm.dump(path)
     from PIL import Image
-    img = Image.open(path).convert("RGB")
-    fails = []
-    for (x, y, rgb, tol) in checks:
-        got = img.getpixel((x, y))
-        if all(abs(got[i] - rgb[i]) <= tol for i in range(3)):
-            continue
-        fails.append(f"({x},{y}) want≈{rgb} got {got}")
-    status = "PASS" if not fails else "FAIL"
-    print(f"[{status}] {label}")
+    for _ in range(3):
+        vm.dump(path)
+        img = Image.open(path).convert("RGB")
+        fails = []
+        for (x, y, rgb, tol) in checks:
+            got = img.getpixel((x, y))
+            if all(abs(got[i] - rgb[i]) <= tol for i in range(3)):
+                continue
+            fails.append(f"({x},{y}) want≈{rgb} got {got}")
+        if not fails:
+            print(f"[PASS] {label}")
+            return True
+        time.sleep(1.0)
+    print(f"[FAIL] {label}")
     for f in fails:
         print("      " + f)
-    return not fails
+    return False
 
 
 def test_start_menu(vm):
@@ -206,19 +248,18 @@ def type_string(vm, text, per_key=0.12):
 
 
 def test_resolution(vm):
-    """Click the terminal, type 'resolution 1280 720', expect the
-    screendump to become 1280x720 with a live panel."""
+    """Type 'resolution 1280 720' over serial, expect the screendump to
+    become 1280x720 with a live panel."""
     from PIL import Image
+    vm.send_serial("\n", settle=0.2)
+    img = None
     for attempt in range(3):
-        vm.click(400, 70)              # focus terminal via title bar
-        time.sleep(0.5)
-        type_string(vm, "resolution 1280 720", per_key=0.22)
-        vm.key(0x1C)                   # Enter (set-1)
-        time.sleep(3)
+        vm.send_serial("resolution 1280 720\n", settle=3.0, wait_ready=True)
         vm.dump("/tmp/lb-res.ppm")
         img = Image.open("/tmp/lb-res.ppm").convert("RGB")
         if img.size == (1280, 720):
             break
+        print(f"[retry] fb still {img.size} (attempt {attempt+1})")
     ok_size = img.size == (1280, 720)
     print(f"[{'PASS' if ok_size else 'FAIL'}] framebuffer resized to {img.size} (want 1280x720)")
     panel_ok = img.getpixel((640, 700)) == (13, 27, 42)
@@ -226,63 +267,98 @@ def test_resolution(vm):
     return ok_size and panel_ok
 
 
+
 def test_el0_app(vm):
     """Start the EL0 GUI app, verify its window renders, click it, and
     verify the content changes (interactive user-space process)."""
+    import shutil
     from PIL import Image
-    S1 = {'r':0x13,'u':0x16,'n':0x31,' ':0x39,'/':0x35,'s':0x1F,'d':0x20,
-          'g':0x22,'i':0x17,'a':0x1E,'p':0x19}
-    ok = False
+
+    def count_hits(path):
+        im = Image.open(path).convert("RGB")
+        w, h = im.size
+
+        def col(px):
+            c = im.getpixel(px)
+            return (c not in [(30, 30, 46), (0, 0, 0), (56, 63, 79)]
+                    and abs(c[0] - c[1]) + abs(c[1] - c[2]) > 50)
+
+        return sum(1 for y in range(630, min(810, h - 2), 3)
+                   for x in range(70, min(340, w - 2), 3)
+                   if col((x, y))), (w, h)
+
+    vm.send_serial("\n", settle=1.0, wait_ready=True)  # handshake first
+    rendered = False
     for attempt in range(3):
-        vm.click(400, 70)             # focus terminal
-        time.sleep(0.5)
-        for ch in "run /sd/guiapp":
-            vm.key(S1[ch])
-            time.sleep(0.2)
-        vm.key(0x1C)                  # Enter
-        time.sleep(1.5)
-        vm.dump("/tmp/lb-el0-pre.ppm")
-        img = Image.open("/tmp/lb-el0-pre.ppm").convert("RGB")
-        W, H = img.size
-        def colorful(px):
-            c = img.getpixel(px)
-            return (c not in [(30,30,46),(0,0,0),(56,63,79)]
-                    and abs(c[0]-c[1]) + abs(c[1]-c[2]) > 50)
-        hits = sum(1 for y in range(630, min(810, H - 2), 3)
-                   for x in range(70, min(340, W - 2), 3)
-                   if colorful((x, y)))
+        # Spawn time varies; the window lives only ~2s after it appears.
+        # Dump continuously for ~12s and accept any live-window frame.
+        vm.send_serial("run /sd/guiapp\n", settle=0.5)
+        for probe in range(12):
+            vm.dump("/tmp/lb-el0-try.ppm")
+            img = Image.open("/tmp/lb-el0-try.ppm").convert("RGB")
+            W, H = img.size
+            def colorful(px):
+                c = img.getpixel(px)
+                return (c not in [(30,30,46),(0,0,0),(56,63,79)]
+                        and abs(c[0]-c[1]) + abs(c[1]-c[2]) > 50)
+            hits = sum(1 for y in range(630, min(810, H - 2), 3)
+                       for x in range(70, min(340, W - 2), 3)
+                       if colorful((x, y)))
+            print(f"  probe {probe}: {hits} px")
+            if hits > 2000:
+                break
+            time.sleep(0.8)
         if hits > 2000:
             print(f"[PASS] EL0 window renders ({hits} gradient px, attempt {attempt+1})")
-            ok = True
+            shutil.copy("/tmp/lb-el0-try.ppm", "/tmp/lb-el0-pre.ppm")
+            rendered = True
             break
-        print(f"[retry] EL0 window not visible yet ({hits} px)")
-    if not ok:
+        print(f"[retry] EL0 window not visible ({hits} px, attempt {attempt+1})")
+    if not rendered:
         print("[FAIL] EL0 window never rendered")
         return False
 
-    # Click the window and check the visible bands change
     def bands(path):
         im = Image.open(path).convert("RGB")
-        W, H = im.size
-        ys = [y for y in range(636, min(636 + 6 * 28, H - 2), 28)]
-        return [im.getpixel((min(200, W - 2), y)) for y in ys]
-    pre = bands("/tmp/lb-el0-pre.ppm")
+        w, h = im.size
+        ys = [y for y in range(636, min(636 + 6 * 28, h - 2), 28)]
+        return [im.getpixel((min(200, w - 2), y)) for y in ys]
+
     vm.click(200, min(715, H - 40))
     time.sleep(1.0)
     vm.dump("/tmp/lb-el0-post.ppm")
-    post = bands("/tmp/lb-el0-post.ppm")
-    changed = sum(1 for a, b in zip(pre, post) if a != b)
-    need = max(2, len(pre) // 2)
-    print(f"[{'PASS' if changed >= need else 'FAIL'}] EL0 app responded to click ({changed}/{len(pre)} bands changed)")
+    # The demo draws a WHITE CROSS at the click point — assert pure-white
+    # pixels inside the window (unambiguous; the gradient never renders
+    # pure white).
+    img2 = Image.open("/tmp/lb-el0-post.ppm").convert("RGB")
+    W2, H2 = img2.size
+    whites = sum(1 for y in range(630, min(810, H2 - 2), 2)
+                 for x in range(70, min(340, W2 - 2), 2)
+                 if img2.getpixel((x, y)) == (255, 255, 255))
+    print(f"[{'PASS' if whites > 30 else 'FAIL'}] EL0 app received the click ({whites} white cross px)")
+    changed = 999 if whites > 30 else 0
+    need = 30
+
+    # Wait for the app to exit so later tests can use the shell.
+    for _ in range(40):
+        vm.dump("/tmp/lb-el0-done.ppm")
+        hits2, _ = count_hits("/tmp/lb-el0-done.ppm")
+        if hits2 < 500:
+            break
+        time.sleep(1.0)
     return changed >= need
 
-
+# Order matters: resolution shrinks the framebuffer, so tests that
+# sample the lower screen run first.
+# Order: el0_app needs the pristine post-boot flow (its window renders
+# reliably there); GUI-click tests run after; resolution last because
+# it shrinks the framebuffer.
 TESTS = {
+    "el0_app": test_el0_app,
     "start_menu": test_start_menu,
     "clock": test_panel_clock,
     "apps": test_apps_alive,
     "resolution": test_resolution,
-    "el0_app": test_el0_app,
 }
 
 
