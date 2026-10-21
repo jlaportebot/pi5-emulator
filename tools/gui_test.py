@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Prefer the dist-packages Pillow (the active venv's PIL has a stale
+# binary for the current interpreter).
+import sys
+sys.path.insert(0, "/usr/lib/python3/dist-packages")
 """
 LobsterOS GUI test harness (E1)
 
