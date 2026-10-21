@@ -107,6 +107,25 @@ class VM:
         except OSError:
             pass
 
+        # C5 greeter: with multi-user disks boot blocks at a login card.
+        # If the greeter is up, click the first user row to log in.
+        def _serial_has(marker):
+            try:
+                with open("/tmp/lb-serial-out.log", "rb") as f:
+                    return marker in f.read().decode("utf-8", "replace")
+            except FileNotFoundError:
+                return False
+        for _ in range(10):
+            if _serial_has("waiting for login"):
+                break
+            if _serial_has("initialization complete"):
+                break
+            time.sleep(1.0)
+        if _serial_has("waiting for login") and not _serial_has("[login]"):
+            self.hmp("lmouse 960 530", 0.3)
+            self.hmp("lclick 1", 0.15)
+            self.hmp("lclick 0", 2.0)
+
     def send_serial(self, text, settle=0.3, wait_ready=False):
         """Type into the guest over the serial console. With wait_ready,
         first handshake with 'uptime' until the shell echoes back —
