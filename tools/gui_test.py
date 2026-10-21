@@ -416,12 +416,30 @@ def test_bg_app(vm):
     return shell_ok and one_window and exited
 
 
+def test_python(vm):
+    """B8: python runs the embedded MicroPython REPL as an EL0
+    process — real Python code must execute and print output."""
+    vm.send_serial("\n", settle=0.5, wait_ready=True)
+    vm.send_serial("python\n", settle=4.0)
+    before = vm._serial_count(">>>")
+    vm.send_serial("print(sum(i*i for i in range(10)))\n", settle=3.0)
+    ok = vm._serial_count("285") > 0  # sum of squares 0..9
+    print(f"[{'PASS' if ok else 'FAIL'}] python executed code (285)")
+    # exit the REPL cleanly (Ctrl-D = EOF)
+    vm.key(0x24) if False else None
+    vm.send_serial("\x04", settle=1.0)  # EOT
+    time.sleep(2.0)
+    vm.send_serial("\n", settle=0.5)
+    return ok
+
+
 TESTS = {
     "el0_app": test_el0_app,
     "start_menu": test_start_menu,
     "clock": test_panel_clock,
     "apps": test_apps_alive,
     "bg_app": test_bg_app,
+    "python": test_python,
     "resolution": test_resolution,
 }
 
