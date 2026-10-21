@@ -376,13 +376,52 @@ def test_el0_app(vm):
 # Order matters: resolution shrinks the framebuffer, so tests that
 # sample the lower screen run first.
 # Order: el0_app needs the pristine post-boot flow (its window renders
-# reliably there); GUI-click tests run after; resolution last because
-# it shrinks the framebuffer.
+# reliably there); GUI-click tests run after; bg_app after el0's app has
+# exited; resolution last because it shrinks the framebuffer.
+
+def test_bg_app(vm):
+    """S2: `run <path> &` spawns a sliced background EL0 app — the shell
+    must stay responsive while the app runs, and the app must create
+    exactly one window (no restart-per-slice)."""
+    vm.send_serial("\n", settle=0.5, wait_ready=True)
+    el0_before = vm._serial_count(chr(39) + 'EL0 App' + chr(39))
+    vm.send_serial("run /sd/guiapp &\n", settle=1.5)
+    time.sleep(2.0)
+
+    before = vm._serial_count("Uptime:")
+    vm.send_serial("uptime\n", settle=0.5)
+    shell_ok = False
+    for _ in range(15):
+        if vm._serial_count("Uptime:") > before:
+            shell_ok = True
+            break
+        time.sleep(1.0)
+    print(f"[{'PASS' if shell_ok else 'FAIL'}] shell responds during bg app")
+
+    # One window for the app — count EL0 App windows created AFTER this
+    # test started (earlier tests also create EL0 App windows).
+    windows = vm._serial_count("Created window id=")
+    el0_windows = vm._serial_count("'EL0 App'") - el0_before
+    one_window = el0_windows == 1
+    print(f"[{'PASS' if one_window else 'FAIL'}] bg app created {el0_windows} window (want 1)")
+
+    # Wait for the app to exit so later tests get a clean shell.
+    for _ in range(150):
+        vm.dump("/tmp/lb-bg-done.ppm")
+        if vm._serial_count("exited with code") > 0:
+            break
+        time.sleep(1.0)
+    exited = vm._serial_count("exited with code") > 0
+    print(f"[{'PASS' if exited else 'FAIL'}] bg app ran to completion")
+    return shell_ok and one_window and exited
+
+
 TESTS = {
     "el0_app": test_el0_app,
     "start_menu": test_start_menu,
     "clock": test_panel_clock,
     "apps": test_apps_alive,
+    "bg_app": test_bg_app,
     "resolution": test_resolution,
 }
 
