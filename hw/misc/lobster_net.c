@@ -211,7 +211,12 @@ static void lobster_net_fetch(LobsterNetState *s)
                 memcpy(code_str, &s->resp_buf[code_start], code_len);
                 code_str[code_len] = '\0';
                 s->resp_code = (uint32_t)atoi(code_str);
-                s->resp_len = code_start;  /* body is everything before the code */
+                /* Body is everything BEFORE the separator newline that
+                 * curl's -w format adds ("
+%{http_code}"). code_start
+                 * points after that newline, which would leave one
+                 * spurious byte on every fetch (and break checksums). */
+                s->resp_len = i;
             }
         }
     }

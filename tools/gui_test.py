@@ -433,6 +433,27 @@ def test_python(vm):
     return ok
 
 
+def test_pkg_install(vm):
+    """B6.4: pkg install downloads a real package from the GitHub
+    package repository, verifies it, extracts it — and the installed
+    app must then run as a background EL0 process."""
+    vm.send_serial("\n", settle=0.5, wait_ready=True)
+    vm.send_serial("pkg install hello\n", settle=20.0)
+    installed = vm._serial_count("installed successfully") > 0
+    print(f"[{'PASS' if installed else 'FAIL'}] pkg install hello (download+verify+extract)")
+    if not installed:
+        return False
+    vm.send_serial("run /apps/hello &\n", settle=8.0)
+    ran = vm._serial_count("'Hello App'") > 0
+    print(f"[{'PASS' if ran else 'FAIL'}] installed app launches (Hello App window)")
+    # let the short demo (150 frames) finish before later tests
+    for _ in range(60):
+        if vm._serial_count("bg PID") > 0 and vm._serial_count("exited with code") > 0:
+            break
+        time.sleep(2.0)
+    return installed and ran
+
+
 TESTS = {
     "el0_app": test_el0_app,
     "start_menu": test_start_menu,
@@ -440,6 +461,7 @@ TESTS = {
     "apps": test_apps_alive,
     "bg_app": test_bg_app,
     "python": test_python,
+    "pkg_install": test_pkg_install,
     "resolution": test_resolution,
 }
 
