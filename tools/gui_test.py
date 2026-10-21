@@ -348,16 +348,20 @@ def test_el0_app(vm):
     # clicks in the first frames can race the SYS_WIN_CREATE registration.
     time.sleep(1.5)
     vm.click(200, min(715, H - 40))
-    time.sleep(1.0)
-    vm.dump("/tmp/lb-el0-post.ppm")
-    # The demo draws a WHITE CROSS at the click point — assert pure-white
-    # pixels inside the window (unambiguous; the gradient never renders
-    # pure white).
-    img2 = Image.open("/tmp/lb-el0-post.ppm").convert("RGB")
-    W2, H2 = img2.size
-    whites = sum(1 for y in range(630, min(810, H2 - 2), 2)
-                 for x in range(70, min(340, W2 - 2), 2)
-                 if img2.getpixel((x, y)) == (255, 255, 255))
+    # The demo draws a WHITE CROSS at the click point and freezes — but
+    # under TCG the app may take a few seconds to reach the frame that
+    # dequeues the press and repaints the marker. Poll for up to ~12s.
+    whites = 0
+    for i in range(8):
+        time.sleep(1.5)
+        vm.dump("/tmp/lb-el0-post.ppm")
+        img2 = Image.open("/tmp/lb-el0-post.ppm").convert("RGB")
+        W2, H2 = img2.size
+        whites = sum(1 for y in range(630, min(810, H2 - 2), 2)
+                     for x in range(70, min(340, W2 - 2), 2)
+                     if img2.getpixel((x, y)) == (255, 255, 255))
+        if whites > 30:
+            break
     print(f"[{'PASS' if whites > 30 else 'FAIL'}] EL0 app received the click ({whites} white cross px)")
     changed = 999 if whites > 30 else 0
     need = 30

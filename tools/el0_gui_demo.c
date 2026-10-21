@@ -41,7 +41,7 @@ void _start(void) {
     u64 clicked = 0;  /* freezes the animation so the marker persists */
     u64 mark_x = 0, mark_y = 0; /* last click point (window-relative) */
 
-    for (u64 frame = 0; frame < 600; frame++) {
+    for (u64 frame = 0; frame < 150; frame++) {
         u64 anim_frame = clicked ? 0 : frame;
         for (u64 band = 0; band < 18; band++) {
             u64 phase = (band * 14 + anim_frame * 4 + hue) & 0xFF;
