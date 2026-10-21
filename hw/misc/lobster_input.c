@@ -30,6 +30,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "hw/misc/lobster_input_hmp.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qapi/error.h"
@@ -409,6 +410,15 @@ static void lobster_mmio_write(void *opaque, hwaddr offset,
         s->head = 0;
         s->tail = 0;
         break;
+    case 0x1C: /* ADVANCE_HEAD — guest consumed slot(s); set head index.
+                * Unlike CLEAR this preserves unconsumed events, so a
+                * multi-event burst is not lost when the guest drains one
+                * event per poll. */
+        s->head = (uint32_t)(val % LOBSTER_EVENT_COUNT);
+        if (s->tail == 0 && s->head == 0) {
+            /* nothing special; ring simply empty-looking */
+        }
+        break;
     default:
         break;
     }
@@ -501,3 +511,68 @@ static void lobster_input_register_type(void)
 }
 
 type_init(lobster_input_register_type)
+
+/* ─── HMP injection API ────────────────────────────────────────────
+ * Used by the GUI test harness (tools/gui_test.py) and remote
+ * control: pushes events straight into the guest ring, bypassing
+ * QEMU's console layer (which drops events when no display client is
+ * attached). */
+
+static LobsterInputState *lobster_input_get(void)
+{
+    /* The machine creates exactly one lobster-input device. */
+    DeviceState *dev = NULL;
+    BusChild *kid;
+    BusState *bus = sysbus_get_default();
+    QTAILQ_FOREACH(kid, &bus->children, sibling) {
+        DeviceState *d = kid->child;
+        if (object_dynamic_cast(OBJECT(d), TYPE_LOBSTER_INPUT)) {
+            dev = d;
+            break;
+        }
+    }
+    return dev ? LOBSTER_INPUT(dev) : NULL;
+}
+
+void lobster_input_hmp_mouse(int x, int y)
+{
+    LobsterInputState *s = lobster_input_get();
+    if (!s) {
+        return;
+    }
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x > s->max_x) x = s->max_x;
+    if (y > s->max_y) y = s->max_y;
+    s->abs_x = x;
+    s->abs_y = y;
+    LobsterEvent ev = { .type = 1, .flags = 0, .x = (uint16_t)x, .y = (uint16_t)y };
+    push_event(s, ev);
+}
+
+void lobster_input_hmp_click(int press)
+{
+    LobsterInputState *s = lobster_input_get();
+    if (!s) {
+        return;
+    }
+    LobsterEvent ev = {
+        .type = 2, .flags = 0,
+        .x = (uint16_t)s->abs_x, .y = (uint16_t)s->abs_y,
+        .btn = press ? 1 : 0,
+    };
+    push_event(s, ev);
+}
+
+void lobster_input_hmp_key(uint8_t scancode)
+{
+    LobsterInputState *s = lobster_input_get();
+    if (!s) {
+        return;
+    }
+    /* Guest protocol: type 3 = press, type 4 = release. */
+    LobsterEvent ev = { .type = 3, .flags = 0, .key = scancode };
+    push_event(s, ev);
+    ev.type = 4;
+    push_event(s, ev);
+}

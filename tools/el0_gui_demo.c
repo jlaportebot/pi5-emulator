@@ -38,7 +38,8 @@ void _start(void) {
     }
 
     u64 hue = 0;      /* click-rotated phase offset */
-    u64 clicked = 0; /* freezes the animation so the marker persists */
+    u64 clicked = 0;  /* freezes the animation so the marker persists */
+    u64 mark_x = 0, mark_y = 0; /* last click point (window-relative) */
 
     for (u64 frame = 0; frame < 600; frame++) {
         u64 anim_frame = clicked ? 0 : frame;
@@ -50,28 +51,28 @@ void _start(void) {
             u64 color = 0xFF000000u | (r << 16) | (g << 8) | b;
             syscall6(SYS_WIN_FILL, win, 0, band * (H / 18), W, H / 18 + 1, color);
         }
+
+        /* Persistent click marker: redrawn AFTER the bands each frame
+         * so the next frame's band redraw cannot erase it. */
+        if (clicked && mark_x < W && mark_y < H) {
+            u64 x0 = mark_x > 15 ? mark_x - 16 : 0;
+            u64 x1 = mark_x + 16 < W ? mark_x + 16 : W - 1;
+            syscall6(SYS_WIN_FILL, win, x0, mark_y, x1 - x0 + 1, 3, 0xFFFFFFFF);
+            u64 y0 = mark_y > 15 ? mark_y - 16 : 0;
+            u64 y1 = mark_y + 16 < H ? mark_y + 16 : H - 1;
+            syscall6(SYS_WIN_FILL, win, mark_x, y0, 3, y1 - y0 + 1, 0xFFFFFFFF);
+        }
         syscall6(SYS_WIN_FLUSH, win, 0, 0, 0, 0, 0);
 
-        /* Poll input: presses draw a white cross at the click point
-         * and rotate the hue. */
+        /* Poll input: presses record the click point and rotate the hue. */
         for (u64 k = 0; k < 8; k++) {
             u64 ev = syscall6(SYS_WIN_POLL, win, 0, 0, 0, 0, 0);
             if (ev == 0 || ev == ~0UL) break;
             if ((ev & 0xFF) == 1) {          /* press */
                 hue += 64;
                 clicked = 1;
-                u64 px = (ev >> 16) & 0xFFFF;
-                u64 py = (ev >> 32) & 0xFFFF;
-                if (px < W && py < H) {
-                    /* horizontal bar */
-                    u64 x0 = px > 15 ? px - 16 : 0;
-                    u64 x1 = px + 16 < W ? px + 16 : W - 1;
-                    syscall6(SYS_WIN_FILL, win, x0, py, x1 - x0 + 1, 3, 0xFFFFFFFF);
-                    /* vertical bar */
-                    u64 y0 = py > 15 ? py - 16 : 0;
-                    u64 y1 = py + 16 < H ? py + 16 : H - 1;
-                    syscall6(SYS_WIN_FILL, win, px, y0, 3, y1 - y0 + 1, 0xFFFFFFFF);
-                }
+                mark_x = (ev >> 16) & 0xFFFF;
+                mark_y = (ev >> 32) & 0xFFFF;
             }
         }
 

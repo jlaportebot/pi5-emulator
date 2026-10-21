@@ -93,7 +93,8 @@ class VM:
                 continue
         else:
             raise RuntimeError("monitor socket never appeared")
-        time.sleep(12)  # boot to desktop
+        time.sleep(16)  # boot to desktop (splash transition needs ~14s
+        # under TCG; clicking earlier races the desktop handoff)
         self.mon = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.mon.connect(self.sock_path)
         self.mon.settimeout(5)
@@ -108,14 +109,33 @@ class VM:
         serial input sent while the guest shell is blocked (e.g. during
         a cooperative run_and_wait) overflows the UART FIFO and is lost.
         """
-        # (no wait_ready with stdio pipe — the shell reads stdin
-        # whenever it is free; blocked-shell sends just queue in the
-        # pipe and are processed later.)
         if wait_ready:
-            time.sleep(0.3)
+            # Real handshake: type 'uptime' until the shell echoes a
+            # response — proves the shell loop is polling serial again
+            # (i.e. any cooperative run_and_wait has returned).
+            # The cooperative EL0 demo runs ~2 minutes under TCG (each
+            # 33ms guest sleep pumps full desktop composites), so the
+            # handshake must allow for it.
+            deadline = time.time() + 150
+            before = self._serial_count("Uptime:")
+            while time.time() < deadline:
+                assert self.proc.stdin is not None
+                self.proc.stdin.write(b"uptime\n")
+                self.proc.stdin.flush()
+                time.sleep(1.0)
+                if self._serial_count("Uptime:") > before:
+                    break
+        assert self.proc.stdin is not None
         self.proc.stdin.write(text.encode())
         self.proc.stdin.flush()
         time.sleep(settle)
+
+    def _serial_count(self, marker):
+        try:
+            with open("/tmp/lb-serial-out.log", "rb") as f:
+                return f.read().decode("utf-8", "replace").count(marker)
+        except FileNotFoundError:
+            return 0
 
     def hmp(self, line, wait=0.3):
         self.mon.sendall((line + "\n").encode())
@@ -324,6 +344,9 @@ def test_el0_app(vm):
         ys = [y for y in range(636, min(636 + 6 * 28, h - 2), 28)]
         return [im.getpixel((min(200, w - 2), y)) for y in ys]
 
+    # Let the app reach steady state (a few frames in) before clicking —
+    # clicks in the first frames can race the SYS_WIN_CREATE registration.
+    time.sleep(1.5)
     vm.click(200, min(715, H - 40))
     time.sleep(1.0)
     vm.dump("/tmp/lb-el0-post.ppm")
@@ -340,7 +363,9 @@ def test_el0_app(vm):
     need = 30
 
     # Wait for the app to exit so later tests can use the shell.
-    for _ in range(40):
+    # Under TCG the 600-frame demo stretches to ~2 minutes of wall time
+    # (every guest sleep pumps a full desktop composite), so poll long.
+    for _ in range(150):
         vm.dump("/tmp/lb-el0-done.ppm")
         hits2, _ = count_hits("/tmp/lb-el0-done.ppm")
         if hits2 < 500:
