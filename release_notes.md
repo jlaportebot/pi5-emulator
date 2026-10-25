@@ -20,7 +20,7 @@ consistent SP_EL1 bank.
 ### 1.76x console throughput (measured)
 - QEMU rebuilt with `-O3` (stock build was a debug `-O0 -g` build): 21.8s → 14.3s
   on `seq 1 50000`.
-- New **lobster-serial** bulk TX device (`0x7d00a000`, magic `LBUF`): the guest
+- New **lobster-serial** bulk TX device (`0x7d100000`, magic `LBUF`): the guest
   writes a 2048-byte payload window and one length register; the device pushes
   the whole chunk through the serial chardev in one host call.
 - Kernel `fast_serial` driver probes for the device and falls back to PL011
@@ -48,7 +48,7 @@ consistent SP_EL1 bank.
 
 ## r4 hotfix (later 10-18): bulk-serial shadowed lobster-net
 
-The new lobster-serial device was mapped at 0x7d00a000 — inside lobster-net's
+The new lobster-serial device was originally mapped at 0x7d00a000 — inside lobster-net's
 MMIO region (its +0x1000 response-data window). QEMU resolved the overlap in
 favor of the later-mapped device, so curl/wget responses returned the serial
 device's registers (zeros + `LBUF` magic) instead of the HTTP body. Moved to

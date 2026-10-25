@@ -86,7 +86,7 @@
 - **Status**: Non-fatal ERROR logs during GIC realize
 - **Details**: `duplicate property 'gic_cpu[0]'`, `gic_viface[0]` etc. on object type 'arm_gic'
 - **Impact**: **None observed** — LobsterOS interrupt delivery works correctly
-- **Likely Cause**: CPU interface MMIO regions created with duplicate names "gic_cpu"/"gic_viface" in `bcm2712.c`
+- **Likely Cause**: duplicate-name MMIO regions from repeated GIC realize in `bcm2712.c` and the raspi5b fixups (tracked as Q20 in the LobsterOS queue)
 
 ### 2. Linux Kernel (Pi OS) Boot
 - **Status**: Device realization completes, but **no console output** from Linux kernel
