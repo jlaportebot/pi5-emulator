@@ -436,7 +436,9 @@ def test_bg_app(vm):
     exactly one window (no restart-per-slice)."""
     vm.send_serial("\n", settle=0.5, wait_ready=True)
     el0_before = vm._serial_count(chr(39) + 'EL0 App' + chr(39))
-    vm.send_serial("run /sd/guiapp &\n", settle=1.5)
+    # wait_ready: without it the spawn line races the shell mid-prompt and
+    # gets dropped by the UART FIFO (observed as a 0-window flake).
+    vm.send_serial("run /sd/guiapp &\n", settle=1.5, wait_ready=True)
     time.sleep(2.0)
 
     before = vm._serial_count("Uptime:")
