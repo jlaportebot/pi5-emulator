@@ -97,8 +97,28 @@ class VM:
                 continue
         else:
             raise RuntimeError("monitor socket never appeared")
-        time.sleep(16)  # boot to desktop (splash transition needs ~14s
-        # under TCG; clicking earlier races the desktop handoff)
+        # Boot to desktop: wait for the kernel's desktop-ready marker instead
+        # of a fixed sleep (E2). Falls back to a 60s timeout so a silent boot
+        # still fails loudly instead of hanging forever.
+        boot_deadline = time.time() + 60
+        ready = False
+        while time.time() < boot_deadline:
+            if self.proc.poll() is not None:
+                self._stderr.close()
+                tail = open(self.stderr_path, "rb").read()[-500:]
+                raise RuntimeError(
+                    f"QEMU exited during startup: {tail!r}")
+            try:
+                with open("/tmp/lb-serial-out.log", "rb") as f:
+                    if b"desktop-ready" in f.read():
+                        ready = True
+                        break
+            except FileNotFoundError:
+                pass
+            time.sleep(0.5)
+        if not ready:
+            raise RuntimeError("desktop-ready marker never appeared on serial")
+        time.sleep(1.0)  # one extra desktop frame before driving the UI
         self.mon = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.mon.connect(self.sock_path)
         self.mon.settimeout(5)
