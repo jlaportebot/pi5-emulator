@@ -354,3 +354,25 @@ All verified with real tool output this session.
 - KNOWN ISSUE: HID input routing degrades after an EL0 app exits
   (first press delivered, later events lost) — tracked for a dedicated
   debug session.
+
+## r43 (2026-10-26): audit Q0–Q2 shipped, CI green
+
+- **Deep audit** (docs/AUDIT_2026-10-25.md in lobster-os): Q0–Q27 queue defined;
+  plan/code reconciliation done (stale checkboxes fixed, superseded plan docs marked).
+- **Kernel hardening (Q1)**: sigreturn SPSR forced to EL0t (no EL0→EL1 escalation);
+  TrapFrame pinned to the exact 272-byte asm frame with compile-time asserts;
+  user_windows hit_test topmost-first (z-order); GUI terminal Ctrl-scancodes
+  corrected (Ctrl+C used to fire on Ctrl+Z); kill reports failure for unknown PIDs;
+  calculator `% 0` no longer panics the kernel.
+- **Host unit-test suite**: 133 tests green (WiFi crypto vectors corrected,
+  EDID fixture 4-bit-shift bug, IPv4 header field offsets — all real bugs).
+- **Boot instrumentation (E2/Q2)**: per-step `[boot-t]` markers +
+  `desktop-ready t_ms=NNN` on serial. Baseline: **desktop-ready ≈ 1.2–1.5s**
+  (was ~4.5s with the 100-tick splash rule, now time-based 300ms grace).
+- **Harness**: waits on `desktop-ready` instead of a fixed 16s sleep; +2 tests
+  (calc_keys 5%0 no-panic, ctrl_c chord) → **10/10**; `lkey` gained a `mods`
+  parameter for Ctrl/Alt/Shift chords (QEMU fork 2b7478d).
+- **Idle**: WFI instead of busy-spin between frames (host CPU drops a core).
+- **CI**: full pipeline green for the first time since the fork — fmt + clippy
+  (-D warnings, both feature sets) + bare-metal build + host std unit tests
+  (x86_64 runner) + kernel artifact upload.
