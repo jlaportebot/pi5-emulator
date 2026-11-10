@@ -1,70 +1,12 @@
-# Raspberry Pi 5 (BCM2712) QEMU Emulator
+# LobsterVM — VirtualBox-style VM Manager for LobsterOS Pi 5 Emulator
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![QEMU](https://img.shields.io/badge/QEMU-9.0+-orange.svg)](https://www.qemu.org/)
-[![Target](https://img.shields.io/badge/target-raspi5b-blue.svg)](https://github.com/qemu/qemu)
-[![LobsterOS](https://img.shields.io/badge/runs-LobsterOS-brightgreen.svg)](https://github.com/jlaportebot/lobster-os)
 
-> **A complete QEMU-based Raspberry Pi 5 (BCM2712) emulator with custom MMIO devices for networking and input, enabling full LobsterOS bare-metal development and testing without physical hardware.**
+**LobsterVM** is a pure-Python VM manager (à la VirtualBox) for the Raspberry Pi 5 (BCM2712) QEMU emulator. It handles persistent VM definitions, qcow2 disk layering, snapshots, and a full **tkinter graphical manager** — no external dependencies beyond the standard library.
 
----
-
-## ✨ What Makes This Special
-
-This is **not** a generic QEMU build. It includes two custom MMIO devices that bridge the emulator to the host:
-
-| Device | Address | Purpose |
-|--------|---------|---------|
-| **lobster-net** | `0x7D00_9000` | HTTP/HTTPS proxy — the guest writes a URL to the device, the *host* performs the TLS connection, returns response to guest. Enables `wget`, `curl`, `pkg`, `gh` in the VM. |
-| **lobster-input** | `0x7D00_8000` | Keyboard/mouse passthrough — host input events forwarded to guest via simple MMIO FIFO. Enables GUI interaction without USB/XHCI emulation complexity. |
-
-This means LobsterOS gets **real internet access** and **real input** while running in a bare-metal VM — no user-mode networking, no SLIRP, no virtio-net complexity.
-
----
-
-## 🏗 Architecture
-
-```
-pi5-emulator/
-├── hw/
-│   ├── arm/
-│   │   ├── bcm2712.c              # BCM2712 SoC initialization (memory map, GIC, CPU)
-│   │   ├── bcm2712_peripherals.c  # Peripherals container with alias mapping
-│   │   ├── bcm2712_rp1.c          # RP1 I/O controller (GPIO, UART, I2C, SPI, SD)
-│   │   ├── bcm2712_v3d.c          # V3D GPU placeholder (mailbox channel only)
-│   │   ├── bcm2835_cprman.c       # CPRMAN clock manager (UART 3MHz from XOSC)
-│   │   ├── bcm2835_fb.c           # Framebuffer (V3D mailbox channel alias technique)
-│   │   ├── bcm2835_peripherals.c  # Base peripherals (IC, timer, DMA, USB, etc.)
-│   │   ├── bcm2836.c              # Pi 3/4 support (backward compat)
-│   │   ├── raspi.c                # Base Raspberry Pi machine
-│   │   ├── raspi5b.c              # Pi 5 machine definition (raspi5b)
-│   │   └── bcm_pcie.c             # PCIe controller (disabled - compilation issues)
-│   ├── display/
-│   │   └── bcm2835_fb.c           # Framebuffer (modified for V3D alias)
-│   ├── misc/
-│   │   └── bcm2835_cprman.c       # CPRMAN clock manager
-│   └── pci-host/
-│       └── bcm_pcie.c             # PCIe host controller (disabled)
-├── include/
-│   ├── hw/arm/
-│   │   ├── bcm2712.h
-│   │   ├── bcm2712_peripherals.h
-│   │   ├── bcm2712_rp1.h
-│   │   ├── bcm2712_v3d.h
-│   │   └── bcm2835_fb.h
-│   └── hw/display/
-│       └── bcm2835_fb.h
-├── bcm2712-rpi-5-b.dtb            # Pi 5 device tree (Linux-compatible)
-├── Image-pi5                       # Raspberry Pi OS kernel (for Linux boot testing)
-├── initramfs8                      # Raspberry Pi OS initramfs
-├── kernel8.img                     # LobsterOS kernel (built from lobster-os repo)
-├── run_lobsteros_shell.sh          # Headless serial console launcher
-├── run_lobsteros_gui.sh            # GTK graphical display launcher
-├── lobsteros_auto_demo.py          # Automated demo driver (serial scripting)
-├── lobsteros_gui.py                # Serial→framebuffer mirror for live terminal
-├── STATUS.md                       # Detailed implementation status
-└── README.md
-```
+The emulator itself lives in the companion QEMU fork (providing `raspi5b` machine, `lobster-net` and `lobster-input` MMIO devices). This repo provides the management layer.
 
 ---
 
@@ -72,226 +14,194 @@ pi5-emulator/
 
 ### Prerequisites
 
-**Ubuntu/Debian:**
+**Debian/Ubuntu/Raspberry Pi OS:**
 ```bash
-sudo apt-get update && sudo apt-get install -y \
-    git ninja-build pkg-config libglib2.0-dev libpixman-1-dev \
-    libfdt-dev libslirp-dev libcapstone-dev libseccomp-dev \
-    python3 python3-venv python3-pip \
-    libgtk-3-dev  # for graphical display
+sudo -S -p '' apt-get update && sudo -S -p '' apt-get install -y \
+    qemu-system-arm qemu-utils \
+    python3 python3-tk \
+    libgtk-3-dev  # for QEMU GTK display
 ```
 
-**Raspberry Pi OS / ARM64 host:** Same packages, works natively.
+You also need the LobsterOS QEMU fork binary at `../qemu-src/build-opt/qemu-system-aarch64` (or set `LOBSTER_QEMU`).
 
-### Build QEMU (with lobster-net + lobster-input)
+### Install (Desktop Integration)
 
 ```bash
-# Clone this repo (contains only Pi 5 patches, not full QEMU)
-git clone https://github.com/jlaportebot/pi5-emulator.git
-cd pi5-emulator
-
-# Build QEMU from source with our patches applied
-# (The configure script patches QEMU's hw/arm/ with our files)
-./configure --target-list=aarch64-softmmu --enable-debug --enable-gtk
-ninja -C build
-
-# Verify build
-./build/qemu-system-aarch64 -version
-# Should show: QEMU emulator version 9.x.x (with raspi5b machine)
+./install.sh
 ```
 
-### Run LobsterOS (Headless Serial Console)
+This:
+- Symlinks `lobstervm.sh` → `~/.local/bin/lobstervm` (add to PATH)
+- Installs `lobstervm-gui.desktop` → `~/.local/share/applications/`
+- Installs icon → `~/.local/share/icons/hicolor/256x256/apps/lobstervm.png`
+
+After install, run `lobstervm` from any terminal or find **"LobsterVM Manager"** in your application menu.
+
+### Uninstall
 
 ```bash
-# Requires LobsterOS kernel built from lobster-os repo
-# kernel8.img should be at /mnt/data/sd-overflow/LobsterOS/lobster-os/build/kernel8.img
-# (or copy to ./kernel8.img)
-
-./run_lobsteros_shell.sh
-
-# In the shell:
-#   help              # 100+ commands
-#   version           # LobsterOS v0.2.0
-#   cc hello.c -run   # Compile C → AArch64 ELF → run
-#   run /bin/python   # MicroPython REPL
-#   wget example.com  # HTTP via lobster-net
-#   gh auth login     # GitHub CLI
-```
-
-### Run LobsterOS (Graphical GTK Display)
-
-```bash
-./run_lobsteros_gui.sh
-
-# Opens a GTK window with framebuffer display
-# Serial console still available in terminal
-# Mouse/keyboard work via lobster-input MMIO device
-```
-
-### Run Raspberry Pi OS (Linux)
-
-```bash
-./build/qemu-system-aarch64 -M raspi5b -m 4G -cpu cortex-a76 -smp 4 \
-    -kernel Image-pi5 -initrd initramfs8 -dtb bcm2712-rpi-5-b.dtb \
-    -serial stdio -display none \
-    -append "console=ttyAMA0,115200 root=/dev/ram0 rw"
+./uninstall.sh
 ```
 
 ---
 
-## 🔧 Custom MMIO Devices (The Magic)
+## 🖥 Commands
 
-### lobster-net (Network Proxy)
+All commands via `./lobstervm.sh` (or `lobstervm` after install):
 
-**Register Map** (base `0x7D00_9000`):
-| Offset | Name | Access | Description |
-|--------|------|--------|-------------|
-| `0x00` | VERSION | R | 0x00030000 (v1.2) |
-| `0x04` | CMD | R/W | Command register |
-| `0x08` | STATUS | R | Status/result |
-| `0x0C` | URL_LEN | R/W | URL length |
-| `0x10` | URL_BUF | W | URL buffer (3840 bytes max) |
-| `0x14` | AUTH_MODE | R/W | 0=none, 1=Bearer (write token + `\n` + URL) |
-| `0x18` | RESP_LEN | R | Response length |
-| `0x20` | RESP_BUF | R | Response buffer (512 KB max) |
+| Command | Description |
+|---------|-------------|
+| `list` | List VMs and their state |
+| `doctor` | Check QEMU, kernel, DTB, base disk |
+| `gui` | **Open graphical VM manager (E2.3)** |
+| `create` | Create a new VM |
+| `modify` | Change a VM's settings |
+| `show` | Show a VM's settings and state |
+| `delete` | Delete a VM and its disk |
+| `start` | Boot a VM (`--headless`, `--display`, `--resume TAG`, `--wait`) |
+| `stop` | Shut down cleanly (`--force` for power-off) |
+| `reset` | Hard-reset the VM |
+| `pause` / `resume` | Freeze / unfreeze the VM |
+| `factory-reset` | Discard all guest disk changes |
+| `snapshot` | Take/restore/list/delete snapshots |
+| `screenshot` | Save the guest screen to PNG/PPM |
+| `click` / `move` / `drag` | Inject mouse input |
+| `key` / `type` | Inject keyboard input |
+| `shell` | Run a guest shell command, print output |
+| `hmp` | Run a raw QEMU monitor command |
+| `serial` | Show the guest serial log |
 
-**Protocol v1.2 (Bearer Auth)**:
-```c
-// Guest writes:
-*(volatile u32*)(NET_BASE + 0x14) = 1;                    // AUTH_MODE = Bearer
-write_string(NET_BASE + 0x10, "ghp_xxx\nhttps://api.github.com/user");
-*(volatile u32*)(NET_BASE + 0x04) = CMD_FETCH;            // CMD = 1
-
-// Host (QEMU) performs HTTPS request with Authorization: Bearer ghp_xxx
-// Returns response to RESP_BUF, sets RESP_LEN, STATUS = 0
-```
-
-**Used by**: `wget`, `curl`, `pkg update`, `gh api`, `gh repo list`, `gh auth login`
-
-### lobster-input (Keyboard/Mouse)
-
-**Register Map** (base `0x7D00_8000`):
-| Offset | Name | Access | Description |
-|--------|------|--------|-------------|
-| `0x00` | VERSION | R | 0x00010000 |
-| `0x04` | KEY_FIFO_HEAD | R | Ring buffer head |
-| `0x08` | KEY_FIFO_TAIL | R | Ring buffer tail |
-| `0x10` | KEY_FIFO_DATA | R | Key events (u32: type<<24 \| code<<16 \| value) |
-| `0x20` | MOUSE_X | R | Relative X |
-| `0x24` | MOUSE_Y | R | Relative Y |
-| `0x28` | MOUSE_BTN | R | Button mask |
-
-**Event Types**: `1=key_down`, `2=key_up`, `3=mouse_move`, `4=mouse_btn`
-
-**Used by**: Window manager input, GUI apps, GTK display
-
----
-
-## 📊 Implementation Status (v1.2)
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| **BCM2712 SoC** | ✅ Complete | 4× Cortex-A76, GIC-400, memory map |
-| **Memory System** | ✅ Complete | 4 GB RAM, 32-bit alias (0x7C00_0000), SCB bus (0x1_07C0_0000) |
-| **Framebuffer** | ✅ Complete | V3D mailbox channel alias, 1920×1080×32 |
-| **Peripherals** | ✅ Complete | OTP, Property Channel, SDHCI (EMMC1), SDHOST, DMA, DWC2 USB, Power, SPI, I2C×3, UART0 (dual addr), EMMC2, RP1 I/O |
-| **GIC-400** | ✅ Complete | 4 cores, 512 SPI, virtualization, ITS |
-| **BCM2835 IC** | ✅ Complete | Legacy GPU/ARM IRQ (64+8) |
-| **CPRMAN** | ✅ Complete | UART clock (3 MHz from XOSC) |
-| **DMA Remap** | ✅ Complete | 0xC000_0000 → 0x0000_0000 (30-bit) |
-| **lobster-net MMIO** | ✅ Complete | v1.2, Bearer auth, 3840 URL / 512 KB resp |
-| **lobster-input MMIO** | ✅ Complete | Keyboard + mouse FIFO |
-| **GENET Ethernet** | ❌ Disabled | qdev_realize parent_bus conflict |
-| **XHCI USB 3.0** | ❌ Disabled | — |
-| **PCIe** | ❌ Disabled | BCM PCIe driver compilation issues |
-| **HDMI** | ❌ Disabled | — |
-| **Audio** | ❌ Disabled | — |
-| **V3D GPU** | ⚠️ Placeholder | Mailbox channel only |
-
-### Known Issues
-
-1. **GIC Duplicate Property Warnings** — Non-fatal ERROR logs during GIC realize (`gic_cpu[0]`, `gic_viface[0]` duplicates). Does not affect functionality.
-2. **Linux Kernel Boot** — Pi OS kernel produces no console output (GIC/device tree mismatches). LobsterOS boots perfectly.
-3. **Missing DT Bindings** — Many Pi 5 specific device tree bindings not implemented.
-
----
-
-## 🚀 Usage Examples
-
-### Automated Demo (CI/Testing)
+### Examples
 
 ```bash
-# Run the automated demo driver (scripts commands over serial)
-python3 lobsteros_auto_demo.py
+# Create a VM
+lobstervm create myvm --memory 4 --resolution 1920x1080 --display gtk
 
-# Or use the shell script with embedded commands
-./run_lobsteros_shell.sh << 'EOF'
-help
-version
-cc /bin/hello.c -run
-run demo
-run /bin/python
-2+2
-exit()
-halt
-EOF
-```
+# Start it graphically
+lobstervm start myvm
 
-### Custom Kernel
+# Take a snapshot
+lobstervm snapshot myvm take "clean-boot"
 
-```bash
-# Build your own LobsterOS kernel
-cd ../lobster-os
-cargo build --features qemu_raspi5b --target aarch64-unknown-none --release
-cp target/aarch64-unknown-none/release/lobster-os ../pi5-emulator/kernel8.img
+# Restore later
+lobstervm snapshot myvm restore "clean-boot"
 
-# Run
-./run_lobsteros_shell.sh
-```
-
-### Debugging with GDB
-
-```bash
-# QEMU with GDB stub
-./build/qemu-system-aarch64 -M raspi5b -m 4G -cpu cortex-a76 -smp 4 \
-    -kernel kernel8.img -serial stdio -display none -s -S
-
-# Connect GDB
-aarch64-none-elf-gdb kernel8.img
-(gdb) target remote :1234
-(gdb) break kmain
-(gdb) continue
+# Open the GUI manager
+lobstervm gui
 ```
 
 ---
 
-## 🔗 Related Repositories
+## 🖱 Graphical Manager (`lobstervm gui`)
 
-| Repo | Description |
-|------|-------------|
-| [lobster-os](https://github.com/jlaportebot/lobster-os) | The bare-metal Rust OS that runs on this emulator |
-| [pi5-emulator](https://github.com/jlaportebot/pi5-emulator) | This repository |
+The **tkinter-based GUI** (roadmap E2.3) provides:
+
+- **VM List** (left): name, state (running/stopped/paused), memory, resolution; refresh button + 3s auto-refresh
+- **Details Pane** (right): disk path, memory, resolution, display, audio, shared folder, kernel, description, status, uptime
+- **Actions**: Start, Stop, Pause/Resume, Reset, Screenshot, Settings, Snapshots
+- **New VM Dialog**: name, memory GB, resolution, disk size — validates via `config.py`
+- **Settings Dialog**: modify any VM field — reuses CLI's modify path
+- **Snapshot Tree**: list/create/restore/delete via `Machine.snapshot_*`
+- **Live Serial Console**: tails the VM's `serial.log`, auto-refreshing
+- **Screenshot**: calls `Machine.screenshot()`, displays PNG in popup
+- **Thread-safe**: long operations run in background threads, UI never freezes
+- **Robust**: errors show dialogs/status messages, never crash the app
+
+### Screenshot
+![GUI Manager](assets/gui-screenshot.png)  <!-- placeholder -->
 
 ---
 
-## 📋 Changelog
+## 🧪 Testing
 
-### v1.2 (2026-09-07) — Current
-- **lobster-net v1.2**: Bearer token authentication mode, increased buffers (URL 3840B, Response 512KB)
-- **lobster-input sync**: Fixed key/mouse event forwarding for GTK display
-- **kernel8.img updated**: LobsterOS v0.2.0 with full shell, editor, Python, network, packages, gh
-- **Launcher scripts**: `run_lobsteros_shell.sh` (headless) + `run_lobsteros_gui.sh` (GTK)
-- **Device tree**: Updated `bcm2712-rpi-5-b.dtb` for Pi 5
+```bash
+# Run unit tests (headless, no display needed)
+./tools/check.sh
 
-### v1.1 (2026-08-30)
-- Fixed GUI launcher: direct QEMU GTK (removed Tkinter wrapper)
-- Added resizable GTK display + serial-to-framebuffer mirror (`lobsteros_gui.py`)
-- Added headless shell launcher + desktop entries
+# Or directly:
+python3 -m unittest discover -s tests -v
+```
 
-### v1.0 (2026-06-21)
-- Initial Pi 5 (BCM2712) QEMU emulator
-- Complete device realization without crashes
-- Basic QEMU patches for BCM2712, RP1, V3D framebuffer
+Tests cover:
+- `format_vm_row()` — VM list formatting
+- `serial_tail()` — log tailing logic
+- `validate_new_vm_params()` — new-VM dialog validation (delegates to `config.py`)
+- `VmConfig` validation — all error paths
+- `VmStore` — create/list/load/delete/snapshots
+
+---
+
+## 🏗 Architecture
+
+```
+lobstervm/
+├── __init__.py
+├── cli.py          # argparse front end
+├── config.py       # VmConfig, VmStore, validation, qcow2 layering
+├── machine.py      # Machine: start/stop/pause/resume/reset, HMP, serial, snapshots, screenshots
+├── paths.py        # Path resolution (no hard-coded paths)
+└── gui.py          # tkinter graphical manager (E2.3)
+```
+
+**Disk layering**: Each VM gets a qcow2 overlay on the pristine base image (`lobsteros.img`). The base is never written; all guest writes and snapshots land in the per-VM overlay.
+
+**Snapshots**: Stored inside the VM's qcow2 disk (`qemu-img snapshot`). Supports multiple named tags.
+
+---
+
+## 📁 Repository Layout
+
+```
+├── lobstervm/              # Python package (the manager)
+│   ├── cli.py
+│   ├── config.py
+│   ├── machine.py
+│   ├── paths.py
+│   └── gui.py
+├── tests/                  # Unit tests (stdlib unittest)
+│   └── test_gui_helpers.py
+├── tools/
+│   └── check.sh            # Test runner
+├── lobstervm.sh            # Entry point (./lobstervm.sh <command>)
+├── install.sh              # Desktop integration installer
+├── uninstall.sh            # Desktop integration uninstaller
+├── lobstervm-gui.desktop   # .desktop launcher
+├── assets/
+│   └── lobsteros-shell-icon.png
+├── kernel8.img             # LobsterOS kernel (build artifact)
+├── lobsteros.img           # Base disk image (pristine ext2)
+├── bcm2712-rpi-5-b.dtb     # Pi 5 device tree
+├── Image-pi5               # Raspberry Pi OS kernel (for Linux boot testing)
+├── initramfs8              # Raspberry Pi OS initramfs
+├── README.md               # This file
+├── STATUS.md               # Implementation status
+└── release_notes.md        # Changelog
+```
+
+---
+
+## 🔧 Configuration
+
+Environment variables (all optional):
+
+| Variable | Purpose |
+|----------|---------|
+| `LOBSTER_QEMU` | Path to `qemu-system-aarch64` with `raspi5b` machine |
+| `LOBSTER_KERNEL` | Override default `kernel8.img` |
+| `LOBSTER_DTB` | Override default DTB |
+| `LOBSTER_BASE_DISK` | Override base disk image |
+| `LOBSTERVM_HOME` | VM store directory (default: `~/.local/share/lobstervm`) |
+| `LOBSTERVM_RUNTIME` | Runtime dir for sockets/pids (default: `$XDG_RUNTIME_DIR/lobstervm`) |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Write tests first (TDD)
+4. Implement, verify `./tools/check.sh` passes
+5. Submit PR with description of changes
 
 ---
 
@@ -301,24 +211,12 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🤝 Contributing
-
-1. Fork the repo
-2. Apply changes to `hw/arm/*.c` and `include/hw/arm/*.h`
-3. Test with `./run_lobsteros_shell.sh` and LobsterOS
-4. Submit PR with description of what device/feature was added/fixed
-
-**Good first issues:** GIC duplicate properties, GENET Ethernet, PCIe compilation, DT bindings.
-
----
-
 ## 🙏 Acknowledgments
 
-- QEMU project (upstream emulation framework)
-- Raspberry Pi documentation (BCM2712, RP1 datasheets)
-- Linux kernel source (device tree bindings reference)
-- LobsterOS project (the OS that makes this emulator useful)
+- **QEMU Project** — upstream emulation framework
+- **Raspberry Pi Documentation** — BCM2712, RP1 datasheets
+- **LobsterOS** — the bare-metal Rust OS that makes this emulator useful
 
 ---
 
-**Pi 5 Emulator** — Built with 🦞 by Mister Lobster
+**LobsterVM** — Built with 🦞 by the LobsterOS team

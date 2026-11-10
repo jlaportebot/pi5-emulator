@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Quick local check script for lobstervm - runs unit tests and syntax checks
-# Equivalent to the CI gate commands.
+# tools/check.sh — Run all unit tests for lobstervm
+#
+# Equivalent to the CI gate commands: unit tests, GUI module import,
+# syntax checks and CLI smoke tests.
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$(readlink -f "$0")")/.."
+
+# Ensure headless display for GUI tests
+export DISPLAY=""
 
 echo "=== Running unit tests ==="
 python3 -m unittest discover -s tests -v
@@ -25,4 +30,13 @@ python3 -m lobstervm --help >/dev/null
 echo "lobstervm --help: OK"
 
 echo ""
-echo "=== All checks passed ==="
+echo "=== Checking lobstervm gui --help ==="
+python3 -m lobstervm gui --help >/dev/null
+echo "lobstervm gui --help: OK"
+
+echo ""
+echo "=== Checking GUI module imports ==="
+python3 -c "import lobstervm.gui; print('gui import ok')"
+
+echo ""
+echo "All tests passed!"
