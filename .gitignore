@@ -1,1 +1,4 @@
+fp_torture.elf
 kernel8.img
+*.pyc
+__pycache__/
