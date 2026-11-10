@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LobsterVM Manager
+GenericName=VM Manager for LobsterOS
+Comment=Graphical manager for LobsterOS Pi 5 virtual machines
+Exec=lobstervm gui
+Icon=lobstervm
+Terminal=false
+Categories=System;Emulator;Development;Virtualization;
+StartupNotify=true
+Keywords=qemu;emulator;raspberry pi;arm64;bcm2712;lobsteros;rust;bare-metal;vm;virtualization;manager;
