@@ -1,0 +1,55 @@
+name: lobstervm CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  unit-tests:
+    name: Unit Tests (no QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+        working-directory: /mnt/data/wt-e25-emulator
+
+      - name: Verify gui_test_vm.py syntax
+        run: python3 -c "import ast,sys; ast.parse(open('tools/gui_test_vm.py').read())"
+        working-directory: /mnt/data/wt-e25-emulator
+
+      - name: Verify gui_test_vm.py --help
+        run: python3 tools/gui_test_vm.py --help
+        working-directory: /mnt/data/wt-e25-emulator
+
+      - name: Verify lobstervm --help
+        run: python3 -m lobstervm --help
+        working-directory: /mnt/data/wt-e25-emulator
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check lobstervm/ tools/ tests/
+        working-directory: /mnt/data/wt-e25-emulator
