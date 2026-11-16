@@ -21,19 +21,23 @@ jobs:
 
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
-        working-directory: /mnt/data/wt-e25-emulator
 
       - name: Verify gui_test_vm.py syntax
         run: python3 -c "import ast,sys; ast.parse(open('tools/gui_test_vm.py').read())"
-        working-directory: /mnt/data/wt-e25-emulator
 
       - name: Verify gui_test_vm.py --help
         run: python3 tools/gui_test_vm.py --help
-        working-directory: /mnt/data/wt-e25-emulator
 
       - name: Verify lobstervm --help
         run: python3 -m lobstervm --help
-        working-directory: /mnt/data/wt-e25-emulator
+
+      - name: Verify lobstervm gui --help
+        run: python3 -m lobstervm gui --help
+
+      - name: Verify GUI module imports
+        run: python3 -c "import lobstervm.gui; print('gui import ok')"
+        env:
+          DISPLAY: ""
 
   lint:
     name: Lint (ruff)
@@ -52,4 +56,3 @@ jobs:
 
       - name: Run ruff
         run: ruff check lobstervm/ tools/ tests/
-        working-directory: /mnt/data/wt-e25-emulator

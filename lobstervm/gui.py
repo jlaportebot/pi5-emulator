@@ -6,7 +6,6 @@ Exposes:
     launch() -> int  # convenience for CLI
 """
 
-import os
 import sys
 import threading
 import time
@@ -15,9 +14,8 @@ from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 from typing import Optional, Callable, Any
 
-from .config import VmConfig, VmStore, VmError, MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS, RESOLUTION_PATTERN
+from .config import VmConfig, VmStore, VmError, MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS
 from .machine import Machine
-from . import paths
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -73,8 +71,8 @@ class AsyncRunner:
             try:
                 result = func()
                 self.root.after(0, lambda: on_done(result))
-            except Exception as e:
-                self.root.after(0, lambda: on_error(e))
+            except Exception as error:  # noqa: BLE001 — forwarded to the UI thread
+                self.root.after(0, lambda err=error: on_error(err))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -803,7 +801,7 @@ def main(store: Optional[VmStore] = None) -> int:
 
     root = tk.Tk()
     try:
-        app = LobsterVmManager(root, store)
+        LobsterVmManager(root, store)
         root.mainloop()
         return 0
     except Exception as e:
