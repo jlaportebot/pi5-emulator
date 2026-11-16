@@ -66,7 +66,9 @@ def base_disk():
         REPO_ROOT / "lobsteros.img",
     ])
     if found is None:
-        raise MissingComponent("lobsteros.img not found; set LOBSTER_BASE_DISK")
+        raise MissingComponent(
+            "lobsteros.img not found; build it with `python3 tools/mkbase.py` "
+            "or set LOBSTER_BASE_DISK")
     return found
 
 

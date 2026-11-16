@@ -19,8 +19,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install qemu-img (VM disks are qcow2 overlays)
-        run: sudo apt-get update && sudo apt-get install -y qemu-utils
+      - name: Install qemu-img and e2fsprogs (qcow2 overlays, disk tools)
+        run: sudo apt-get update && sudo apt-get install -y qemu-utils e2fsprogs
 
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v

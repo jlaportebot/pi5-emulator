@@ -4,7 +4,7 @@ import sys
 import time
 from dataclasses import fields
 
-from . import paths
+from . import disk, paths
 from .config import MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS, VmConfig, VmError, VmStore
 from .machine import Machine
 
@@ -141,6 +141,21 @@ def cmd_snapshot(store, args):
     return 0
 
 
+def cmd_disk(store, args):
+    if args.disk_action == "info":
+        print("\n".join(disk.describe(store, args.name)))
+    elif args.disk_action == "export":
+        target = disk.export_disk(store, args.name, args.output, args.format, args.force)
+        print(f"Exported {args.name} to {target} ({args.format}, standalone)")
+    elif args.disk_action == "import":
+        disk.import_disk(store, args.name, args.image, args.yes)
+        print(f"Imported {args.image} as the disk of {args.name}")
+    else:
+        size = disk.resize_disk(store, args.name, args.size, args.yes)
+        print(f"Disk of {args.name} resized to {disk.human_size(size)}")
+    return 0
+
+
 def cmd_screenshot(store, args):
     print(Machine(args.name, store).screenshot(args.path))
     return 0
@@ -250,8 +265,35 @@ def build_parser():
     add("pause", cmd_simple("pause"), "freeze the VM")
     add("resume", cmd_simple("resume"), "unfreeze the VM")
     add("factory-reset", cmd_factory_reset, "discard all guest disk changes")
+    _add_disk_commands(add("disk", cmd_disk, "inspect/export/import/resize a VM disk",
+                           named=False))
     _add_runtime_commands(add)
     return parser
+
+
+def _add_disk_commands(disk_parser):
+    actions = disk_parser.add_subparsers(dest="disk_action", required=True)
+
+    def action(name, help_text):
+        parser = actions.add_parser(name, help=help_text, description=help_text)
+        parser.add_argument("name", help="VM name")
+        return parser
+
+    action("info", "show format, sizes, backing file and snapshots")
+    export = action("export", "write a standalone flattened copy (VM must be stopped)")
+    export.add_argument("output", help="destination file")
+    export.add_argument("--format", choices=disk.EXPORT_FORMATS, default="raw")
+    export.add_argument("--force", action="store_true", help="overwrite the output")
+    import_ = action("import", "replace the disk with an ext2 image (raw or qcow2); "
+                     "existing data and snapshots are lost")
+    import_.add_argument("image", help="raw or qcow2 image holding an ext2 volume")
+    import_.add_argument("--yes", action="store_true", help="confirm the data loss")
+    resize = action("resize", "grow the guest volume (ext2 is resized in place); "
+                    "snapshots are lost, VM must be stopped")
+    resize.add_argument("size", help="new size, e.g. 128M or 1G (bytes accepted; "
+                        "guest driver limit 1G, multiple of 1M)")
+    resize.add_argument("--yes", action="store_true",
+                        help="confirm that snapshots are discarded")
 
 
 def _add_runtime_commands(add):
