@@ -1,0 +1,5 @@
+Welcome to LobsterOS 0.2.0 (BCM2712 / Raspberry Pi 5)
+
+ * Documentation:  github.com/jlaportebot/lobster-os
+ * Packages:       pkg install <name>
+ * Compile C:      cc file.c -run
