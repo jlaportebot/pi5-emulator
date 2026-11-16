@@ -24,7 +24,10 @@ from .config import VmError, VmStore
 
 HMP_PROMPT = b"(qemu) "
 HMP_TIMEOUT_S = 30.0
-SHELL_PROMPT_PATTERN = re.compile(rb"lobster:[^\r\n]*# $")
+# The guest shell prints "lobster:<cwd># " and does NOT terminate it with a
+# newline (the cursor sits right after the prompt), so the pattern must not
+# anchor on end-of-line.
+SHELL_PROMPT_PATTERN = re.compile(rb"lobster:[^\r\n]*# ")
 DESKTOP_READY_MARKER = b"desktop-ready"
 LOGIN_WAIT_MARKER = b"waiting for login"
 BOOT_TIMEOUT_S = 90.0
@@ -89,7 +92,7 @@ class Machine:
 
     def wait_desktop(self, timeout=BOOT_TIMEOUT_S):
         """Block until the guest reports its desktop is up; returns boot ms."""
-        self._wait_serial(DESKTOP_READY_MARKER, 0, timeout)
+        self.wait_serial(DESKTOP_READY_MARKER, timeout)
         match = re.search(rb"desktop-ready t_ms=(\d+)", self.serial_bytes())
         return int(match.group(1)) if match else None
 
@@ -229,17 +232,53 @@ class Machine:
             os.close(fd)
 
     def shell(self, command, timeout=60.0):
-        """Run a guest shell command over serial; return what it printed."""
+        """Run a guest shell command over serial; return what it printed.
+
+        Completion is detected by the shell prompt: the guest prints its
+        prompt before reading a command and reprints it once the command
+        finishes, so the prompt count must grow by one.
+        """
         offset = len(self.serial_bytes())
+        prompts_before = len(SHELL_PROMPT_PATTERN.findall(self.serial_bytes()))
         self.type_serial(command + "\n")
         deadline = time.monotonic() + timeout
+        encoded = command.encode()
         while time.monotonic() < deadline:
             output = self.serial_bytes()[offset:]
-            echoed = output.find(command.encode())
-            if echoed >= 0 and SHELL_PROMPT_PATTERN.search(output[echoed:]):
-                return _shell_output(output[echoed:], command)
+            if len(SHELL_PROMPT_PATTERN.findall(self.serial_bytes())) > prompts_before:
+                echoed = output.find(encoded)
+                if echoed >= 0:
+                    return _shell_output(output[echoed:], command)
+                return ""
             time.sleep(POLL_INTERVAL_S)
         raise VmError(f"guest shell did not finish {command!r} in {timeout:.0f}s")
+
+    def send_line(self, text):
+        """Type one line on the serial console and return without waiting.
+
+        Use this for foreground programs and REPLs that do not hand the
+        console back to the shell prompt; poll the log with
+        :meth:`wait_serial` for the evidence you expect.
+        """
+        self.type_serial(text + "\n")
+
+    def wait_serial(self, marker, timeout, since_offset=0):
+        """Block until ``marker`` appears on serial at/after ``since_offset``.
+
+        Returns the offset just past the match. Raises :class:`VmError` on
+        timeout or when the VM exits while waiting.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            found = self.serial_bytes().find(marker, since_offset)
+            if found >= 0:
+                return found + len(marker)
+            if not self.is_running():
+                raise VmError(f"VM {self.name} exited while waiting for {marker!r}")
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(POLL_INTERVAL_S)
+        raise VmError(f"timed out after {timeout:.0f}s waiting for {marker!r} on serial")
 
     # ── internals ────────────────────────────────────────────────────
 
@@ -291,16 +330,6 @@ class Machine:
                 return
             time.sleep(POLL_INTERVAL_S)
         raise VmError("QEMU monitor socket never appeared")
-
-    def _wait_serial(self, marker, offset, timeout):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if marker in self.serial_bytes()[offset:]:
-                return
-            if not self.is_running():
-                raise VmError(f"VM {self.name} exited while waiting for {marker!r}")
-            time.sleep(POLL_INTERVAL_S)
-        raise VmError(f"timed out after {timeout:.0f}s waiting for {marker!r} on serial")
 
     def _wait_exit(self, timeout):
         deadline = time.monotonic() + timeout

@@ -5,15 +5,14 @@ Unit tests for lobstervm (E2.8).
 Run with: python3 -m unittest discover -s tests -v
 These tests do NOT require QEMU to be present.
 """
-import io
-import json
 import os
+import shutil
 import socket
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import patch, Mock
 
 # Ensure lobstervm is importable
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -21,12 +20,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from lobstervm.config import (
     VmConfig, VmStore, VmError,
-    VM_NAME_PATTERN, RESOLUTION_PATTERN,
     MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS,
 )
 from lobstervm.machine import (
     Machine, _read_until_prompt, _strip_hmp_echo, _parse_snapshot_table,
-    _shell_output, HMP_PROMPT
+    _shell_output
 )
 from lobstervm import paths
 from lobstervm.cli import main, build_parser
@@ -121,11 +119,9 @@ class TestConfigValidation(unittest.TestCase):
             self.assertEqual(config.machine_type, machine)
 
     def test_kernel_path_property(self):
-        """kernel_path should return default when empty, custom when set."""
-        config = VmConfig(name="test", kernel="")
-        # default_kernel() may raise MissingComponent; test with custom
-        config2 = VmConfig(name="test", kernel="/custom/kernel8.img")
-        self.assertEqual(config2.kernel_path, Path("/custom/kernel8.img"))
+        """kernel_path should return the configured kernel when set."""
+        config = VmConfig(name="test", kernel="/custom/kernel8.img")
+        self.assertEqual(config.kernel_path, Path("/custom/kernel8.img"))
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -611,6 +607,74 @@ class TestMachine(unittest.TestCase):
         machine = Machine("testvm", self.store)
         with self.assertRaises(VmError):
             machine.hmp("info status")
+
+    def _running_machine(self):
+        """A Machine whose VM looks running and whose serial log is a file."""
+        self.store.create(VmConfig(name="testvm"))
+        machine = Machine("testvm", self.store)
+        machine.runtime_dir.mkdir(parents=True, exist_ok=True)
+        patcher = patch.object(Machine, "is_running", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, machine.runtime_dir, True)
+        return machine
+
+    def test_send_line_appends_newline_without_waiting(self):
+        """send_line should type text + newline and return immediately."""
+        machine = self._running_machine()
+        with patch.object(Machine, "type_serial") as typed:
+            machine.send_line("run /sd/guiapp")
+        typed.assert_called_once_with("run /sd/guiapp\n")
+
+    def test_wait_serial_returns_offset_past_marker(self):
+        """wait_serial should return the offset just after the marker."""
+        machine = self._running_machine()
+        machine.serial_log_path.write_bytes(b"boot... desktop-ready t_ms=5")
+        end = machine.wait_serial(b"desktop-ready", timeout=1.0)
+        self.assertEqual(end, len(b"boot... desktop-ready"))
+
+    def test_wait_serial_ignores_matches_before_offset(self):
+        """A marker seen before since_offset must not satisfy the wait."""
+        machine = self._running_machine()
+        machine.serial_log_path.write_bytes(b"Uptime: 1\n")
+        with self.assertRaises(VmError):
+            machine.wait_serial(b"Uptime:", timeout=0.3, since_offset=5)
+
+    def test_wait_serial_times_out(self):
+        """wait_serial should raise VmError when the marker never appears."""
+        machine = self._running_machine()
+        with self.assertRaises(VmError) as ctx:
+            machine.wait_serial(b"never", timeout=0.3)
+        self.assertIn("timed out", str(ctx.exception))
+
+    def test_wait_serial_stops_when_vm_exits(self):
+        """wait_serial should fail fast if the VM is not running."""
+        machine = self._running_machine()
+        with patch.object(Machine, "is_running", return_value=False):
+            with self.assertRaises(VmError) as ctx:
+                machine.wait_serial(b"never", timeout=30.0)
+        self.assertIn("exited", str(ctx.exception))
+
+    def test_shell_waits_for_prompt_count_to_grow(self):
+        """shell() should return only after a new prompt follows the command."""
+        machine = self._running_machine()
+        machine.serial_log_path.write_bytes(b"lobster:/# ")
+
+        def guest_replies(_text):
+            machine.serial_log_path.write_bytes(
+                b"lobster:/# uptime\r\nUptime: 3s\r\nlobster:/# ")
+
+        with patch.object(Machine, "type_serial", side_effect=guest_replies):
+            output = machine.shell("uptime", timeout=2.0)
+        self.assertEqual(output, "Uptime: 3s")
+
+    def test_shell_times_out_while_foreground_app_owns_console(self):
+        """No new prompt (foreground app running) must raise, not hang."""
+        machine = self._running_machine()
+        machine.serial_log_path.write_bytes(b"lobster:/# ")
+        with patch.object(Machine, "type_serial"):
+            with self.assertRaises(VmError):
+                machine.shell("run /sd/guiapp", timeout=0.4)
 
 
 # ════════════════════════════════════════════════════════════════════════
