@@ -118,7 +118,7 @@
 3. **IRQ Connections**: Wrapped all unimplemented device IRQ connections in `#if 0`
 4. **lobster-net v1.2**: Bearer auth mode (reg 0x34), increased buffers, cmd register
 5. **lobster-input**: Synced key/mouse event forwarding for GTK display
-6. **Launcher Scripts**: `run_lobsteros_shell.sh` (headless) + `run_lobsteros_gui.sh` (GTK)
+6. **Launcher**: `lobstervm.sh start <vm> --headless` / `lobstervm.sh start <vm>` (GTK)
 7. **Demo Driver**: `lobsteros_auto_demo.py` for automated testing
 
 ---
@@ -132,10 +132,10 @@ cd pi5-emulator
 ninja -C build
 
 # Test with LobsterOS (headless serial)
-./run_lobsteros_shell.sh
+./lobstervm.sh start lobsteros --headless
 
 # Test with LobsterOS (graphical GTK)
-./run_lobsteros_gui.sh
+./lobstervm.sh start lobsteros
 
 # Test with Raspberry Pi OS (Linux - no console output yet)
 ./build/qemu-system-aarch64 -M raspi5b -m 4G -cpu cortex-a76 -smp 4 \

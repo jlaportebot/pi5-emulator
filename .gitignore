@@ -2,3 +2,5 @@ fp_torture.elf
 kernel8.img
 *.pyc
 __pycache__/
+lobsteros.img
+lobsteros-overlay.qcow2

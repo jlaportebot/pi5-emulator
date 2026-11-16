@@ -143,7 +143,9 @@ lobstervm/
 └── gui.py          # tkinter graphical manager (E2.3)
 ```
 
-**Disk layering**: Each VM gets a qcow2 overlay on the pristine base image (`lobsteros.img`). The base is never written; all guest writes and snapshots land in the per-VM overlay.
+**Disk layering**: Each VM gets a qcow2 overlay on the pristine base image (`lobsteros.img`). The base is never written; all guest writes and snapshots land in the per-VM overlay. Build the base once with `python3 tools/mkbase.py` (it is not tracked; `--check` proves it matches `base-root/`).
+
+**Disk tools**: `lobstervm disk info|export|import|resize <vm> ...` (stopped VM for all but `info`). `resize` grows the ext2 volume in place (max 1G: the guest driver handles 128 block groups) and discards snapshots.
 
 **Snapshots**: Stored inside the VM's qcow2 disk (`qemu-img snapshot`). Supports multiple named tags.
 
@@ -161,7 +163,8 @@ lobstervm/
 ├── tests/                  # Unit tests (stdlib unittest)
 │   └── test_gui_helpers.py
 ├── tools/
-│   └── check.sh            # Test runner
+│   ├── check.sh            # Test runner
+│   └── mkbase.py           # Builds lobsteros.img from base-root/
 ├── lobstervm.sh            # Entry point (./lobstervm.sh <command>)
 ├── install.sh              # Desktop integration installer
 ├── uninstall.sh            # Desktop integration uninstaller
@@ -169,7 +172,9 @@ lobstervm/
 ├── assets/
 │   └── lobsteros-shell-icon.png
 ├── kernel8.img             # LobsterOS kernel (build artifact)
-├── lobsteros.img           # Base disk image (pristine ext2)
+├── base-root/              # File tree of the base disk (tracked)
+├── base-root.manifest      # Modes/owners for base-root/
+├── lobsteros.img           # Base disk image, built by tools/mkbase.py (not tracked)
 ├── bcm2712-rpi-5-b.dtb     # Pi 5 device tree
 ├── Image-pi5               # Raspberry Pi OS kernel (for Linux boot testing)
 ├── initramfs8              # Raspberry Pi OS initramfs

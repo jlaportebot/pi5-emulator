@@ -22,6 +22,9 @@ jobs:
       - name: Install qemu-img and e2fsprogs (qcow2 overlays, disk tools)
         run: sudo apt-get update && sudo apt-get install -y qemu-utils e2fsprogs
 
+      - name: Build the base disk image from base-root/
+        run: python3 tools/mkbase.py
+
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
 

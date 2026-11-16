@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -74,6 +75,17 @@ class TestManifest(unittest.TestCase):
             if entry.kind != "d":
                 self.assertTrue((mkbase.TREE_DIR / entry.path.lstrip("/")).exists()
                                 or (mkbase.TREE_DIR / entry.path.lstrip("/")).is_symlink())
+
+
+class TestMissingBaseImage(unittest.TestCase):
+    def test_error_points_at_mkbase(self):
+        from lobstervm import paths
+        missing = Path(tempfile.gettempdir()) / "definitely-missing-base.img"
+        with patch.dict("os.environ", {"LOBSTER_BASE_DISK": str(missing)}), \
+                patch.object(paths, "REPO_ROOT", missing.parent / "no-such-repo"), \
+                self.assertRaises(paths.MissingComponent) as caught:
+            paths.base_disk()
+        self.assertIn("python3 tools/mkbase.py", str(caught.exception))
 
 
 @needs_e2fsprogs
