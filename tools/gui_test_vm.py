@@ -6,12 +6,16 @@ Boots a throwaway VM with a qcow2 overlay on the pristine base image,
 drives the desktop via HMP, captures screendumps, and asserts pixel
 conditions with PIL. Produces a JUnit-style XML summary.
 
+Interaction semantics follow the legacy tools/gui_test.py step for step:
+commands that return to the shell prompt go through Machine.shell();
+foreground GUI apps and REPL input are TYPED without waiting
+(Machine.send_line) and the expected evidence is polled for afterwards.
+
 Usage:
   python3 gui_test_vm.py [--test name] [--junit path] [--verbose]
 """
 import argparse
-import os
-import socket
+import shutil
 import sys
 import tempfile
 import time
@@ -31,104 +35,114 @@ try:
 except ImportError:
     Image = None
 
-# ─── Test harness configuration ──────────────────────────────────────
-# Defer path resolution so --help works without the components present
+PILLOW_MISSING_MESSAGE = "error: Pillow is required for pixel assertions (pip install pillow)"
+
+
 def _default_kernel():
+    """Resolve lazily so --help works without the components present."""
     try:
         return str(paths.default_kernel())
     except paths.MissingComponent:
         return "kernel8.img"
 
-def _default_dtb():
-    try:
-        return str(paths.default_dtb())
-    except paths.MissingComponent:
-        return "bcm2712-rpi-5-b.dtb"
-
-def _default_qemu():
-    try:
-        return str(paths.qemu_binary())
-    except paths.MissingComponent:
-        return "qemu-system-aarch64"
 
 DEFAULT_KERNEL = _default_kernel()
-DEFAULT_DTB = _default_dtb()
-BASE_DISK = str(paths.base_disk())  # base disk is referenced but not used directly
-
-# Set-1 scancodes for strings the harness types
-S1 = {
-    'a': 0x1E, 'b': 0x30, 'c': 0x2E, 'd': 0x20, 'e': 0x12, 'f': 0x21,
-    'g': 0x22, 'h': 0x23, 'i': 0x17, 'j': 0x24, 'k': 0x25, 'l': 0x26,
-    'm': 0x32, 'n': 0x31, 'o': 0x18, 'p': 0x19, 'q': 0x10, 'r': 0x13,
-    's': 0x1F, 't': 0x14, 'u': 0x16, 'v': 0x2F, 'w': 0x11, 'x': 0x2D,
-    'y': 0x15, 'z': 0x2C, '1': 0x02, '2': 0x03, '3': 0x04, '4': 0x05,
-    '5': 0x06, '6': 0x07, '7': 0x08, '8': 0x09, '9': 0x0A, '0': 0x0B,
-    ' ': 0x39, '/': 0x35, '.': 0x34,
-}
 
 DESKTOP_READY_MARKER = b"desktop-ready"
 LOGIN_WAIT_MARKER = b"waiting for login"
+UPTIME_MARKER = b"Uptime:"
+EXITED_MARKER = b"exited with code"
+CTRL_C = "\x03"
+CTRL_D = "\x04"
 BOOT_TIMEOUT_S = 90.0
-HMP_TIMEOUT_S = 30.0
-SHELL_PROMPT_PATTERN = rb"lobster:[^\r\n]*# $"
+MONITOR_TIMEOUT_S = 20.0
 MOUSE_LEFT = 1
-GTK_OPTIONS = "gtk,show-tabs=off,show-cursor=off,grab-on-hover=on"
-VNC_DISPLAY = "vnc=127.0.0.1:9"
+
+# Shell handshake: the cooperative EL0 demo can keep the shell busy for ~2
+# minutes under TCG, so the handshake must tolerate that.
+SHELL_READY_TIMEOUT_S = 150.0
+PKG_INSTALL_TIMEOUT_S = 180.0
+SHELL_NUDGE_AFTER_S = 20.0
+HANDSHAKE_POLL_S = 1.0
+
+# Input pacing, mirroring the legacy harness (mouse move settle, press
+# duration, post-release settle, post-key settle).
+MOVE_SETTLE_S = 0.2
+CLICK_HOLD_S = 0.15
+CLICK_SETTLE_S = 0.4
+KEY_SETTLE_S = 0.25
+
+# Fixed screen geometry and colours of the 1920x1080 desktop.
+LAUNCHER_XY = (25, 1060)
+PANEL_RGB = (13, 27, 42)
+MENU_RGB = (26, 38, 52)
+WINDOW_RGB = (30, 30, 46)
+EL0_IGNORED_RGB = [(30, 30, 46), (0, 0, 0), (56, 63, 79)]
+EL0_REGION = (70, 340, 630, 810)  # x0, x1, y0, y1
+EL0_RENDER_MIN_PX = 2000
+EL0_GONE_MAX_PX = 500
+EL0_CLICK_MIN_WHITE_PX = 30
+EL0_CLICK_XY = (200, 715)
+RESIZED_SIZE = (1280, 720)
+RESIZED_PANEL_XY = (640, 700)
+RESIZE_SETTLE_TIMEOUT_S = 20.0
+KEY_SC = {"h": 0x23, "e": 0x12, "l": 0x26, "5": 0x06, "0": 0x0B, "enter": 0x1C,
+          "esc": 0x01, "pct": 0x08, "c": 0x2E}
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────
 
-def _display_argument(display):
-    if display == "gtk":
-        return GTK_OPTIONS
-    if display == "vnc":
-        return VNC_DISPLAY
-    return display
+def serial_count(vm, marker: bytes) -> int:
+    return vm.serial_bytes().count(marker)
 
 
-def _strip_hmp_echo(reply: bytes) -> str:
-    """Drop the echoed command line (with its readline escapes) and prompt."""
-    text = reply.decode("utf-8", "replace")
-    prompt = "(qemu) "
-    if text.endswith(prompt):
-        text = text[: -len(prompt)]
-    _, _, body = text.partition("\n")
-    return body.replace("\r", "")
+def wait_count_above(vm, marker: bytes, baseline: int, timeout: float) -> bool:
+    """Poll until ``marker`` occurs more than ``baseline`` times on serial."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if serial_count(vm, marker) > baseline:
+            return True
+        time.sleep(0.5)
+    return serial_count(vm, marker) > baseline
 
 
-def _read_until_prompt(sock: socket.socket) -> bytes:
-    data = b""
-    while not data.endswith(b"(qemu) "):
-        try:
-            chunk = sock.recv(65536)
-        except socket.timeout as error:
-            raise VmError("QEMU monitor did not answer") from error
-        if not chunk:
-            break
-        data += chunk
-    return data
+def ensure_shell(vm, timeout: float = SHELL_READY_TIMEOUT_S) -> None:
+    """Bring the guest back to an idle shell (legacy ``wait_ready`` handshake).
+
+    Types ``uptime`` until the guest answers, which proves the shell loop is
+    polling serial again. If it stays silent for a while, Ctrl+C is sent once
+    to leave a REPL or abort a half-typed line. Input typed while the shell
+    is blocked can be lost to the UART FIFO, hence the repeats.
+    """
+    start = time.monotonic()
+    before = serial_count(vm, UPTIME_MARKER)
+    nudged = False
+    while time.monotonic() - start < timeout:
+        vm.send_line("uptime")
+        if wait_count_above(vm, UPTIME_MARKER, before, HANDSHAKE_POLL_S):
+            return
+        if not nudged and time.monotonic() - start > SHELL_NUDGE_AFTER_S:
+            print("[harness] guest shell silent, sending Ctrl+C")
+            vm.type_serial(CTRL_C)
+            nudged = True
+    raise VmError(f"guest shell did not answer 'uptime' within {timeout:.0f}s")
 
 
-def type_string(vm: Machine, text: str, per_key: float = 0.12) -> None:
-    for ch in text:
-        vm.key(S1[ch])
-        time.sleep(per_key)
+def load_image(vm, path: Path):
+    vm.screenshot(path)
+    return Image.open(path).convert("RGB")
 
 
-def expect(vm: Machine, checks: list, label: str, tmp_path: Path) -> bool:
+def expect(vm, checks: list, label: str, tmp_path: Path) -> bool:
     """checks: list of (x, y, (r,g,b), tol). Retries the dump up to 3 times."""
-    path = tmp_path / "lb-expect.ppm"
-    if Image is None:
-        print(f"[SKIP] {label} (PIL not available)")
-        return True
+    fails = []
     for _ in range(3):
-        vm.screenshot(path)
-        img = Image.open(path).convert("RGB")
+        img = load_image(vm, tmp_path / "lb-expect.ppm")
         fails = []
         for (x, y, rgb, tol) in checks:
             got = img.getpixel((x, y))
-            if all(abs(got[i] - rgb[i]) <= tol for i in range(3)):
-                continue
-            fails.append(f"({x},{y}) want≈{rgb} got {got}")
+            if not all(abs(got[i] - rgb[i]) <= tol for i in range(3)):
+                fails.append(f"({x},{y}) want≈{rgb} got {got}")
         if not fails:
             print(f"[PASS] {label}")
             return True
@@ -139,261 +153,289 @@ def expect(vm: Machine, checks: list, label: str, tmp_path: Path) -> bool:
     return False
 
 
+def report(ok: bool, message: str) -> bool:
+    print(f"[{'PASS' if ok else 'FAIL'}] {message}")
+    return ok
+
+
+def count_bright(img, box, threshold: int, step: int = 2) -> int:
+    x0, x1, y0, y1 = box
+    return sum(1 for y in range(y0, y1, step) for x in range(x0, x1, step)
+               if sum(img.getpixel((x, y))) > threshold)
+
+
+def count_gradient_px(img) -> int:
+    """Colourful (non-grey, non-background) pixels in the EL0 window area."""
+    x0, x1, y0, y1 = EL0_REGION
+    width, height = img.size
+
+    def colorful(px):
+        c = img.getpixel(px)
+        return c not in EL0_IGNORED_RGB and abs(c[0] - c[1]) + abs(c[1] - c[2]) > 50
+
+    return sum(1 for y in range(y0, min(y1, height - 2), 3)
+               for x in range(x0, min(x1, width - 2), 3)
+               if colorful((x, y)))
+
+
+def count_white_px(img) -> int:
+    x0, x1, y0, y1 = EL0_REGION
+    width, height = img.size
+    return sum(1 for y in range(y0, min(y1, height - 2), 2)
+               for x in range(x0, min(x1, width - 2), 2)
+               if img.getpixel((x, y)) == (255, 255, 255))
+
+
 # ─── Test implementations ────────────────────────────────────────────
 
-def test_start_menu(vm: Machine, tmp_path: Path) -> bool:
+def test_start_menu(vm, tmp_path: Path) -> bool:
     """Click the launcher, expect the start menu panel to appear."""
     ok = False
     for attempt in range(3):
-        vm.click(25, 1060)  # launcher button, bottom-left
+        vm.click(*LAUNCHER_XY)
         time.sleep(0.8)
         ok = expect(vm, [
-            (150, 900, (26, 38, 52), 40),     # menu panel bg
-            (150, 750, (26, 38, 52), 40),     # menu panel bg (upper)
+            (150, 900, MENU_RGB, 40),     # menu panel bg
+            (150, 750, MENU_RGB, 40),     # menu panel bg (upper)
         ], f"start menu opens on launcher click (attempt {attempt + 1})", tmp_path)
         if ok:
             break
     if ok:
-        vm.screenshot(tmp_path / "lb-sm.ppm")
-        img = Image.open(tmp_path / "lb-sm.ppm").convert("RGB")
-        bright = sum(1 for y in range(700, 1040, 2) for x in range(0, 400, 2)
-                     if sum(img.getpixel((x, y))) > 600)
-        print(f"[{'PASS' if bright > 20 else 'FAIL'}] menu labels render ({bright} px)")
-        ok = ok and bright > 20
-    vm.key(0x01)  # Esc closes the menu
+        img = load_image(vm, tmp_path / "lb-sm.ppm")
+        bright = count_bright(img, (0, 400, 700, 1040), 600)
+        ok = report(bright > 20, f"menu labels render ({bright} px)")
+    vm.key(KEY_SC["esc"])  # closes the menu
     time.sleep(0.5)
     return ok
 
 
-def test_panel_clock(vm: Machine, tmp_path: Path) -> bool:
+def test_panel_clock(vm, tmp_path: Path) -> bool:
     """The panel clock must render text right of the tray."""
-    ok = expect(vm, [
-        (900, 1070, (13, 27, 42), 40),    # panel bg itself
-    ], "panel painted", tmp_path)
-    vm.screenshot(tmp_path / "lb-clock.ppm")
-    img = Image.open(tmp_path / "lb-clock.ppm").convert("RGB")
-    bright = sum(1 for y in range(1050, 1075) for x in range(1700, 1920)
-                 if sum(img.getpixel((x, y))) > 450)
-    print(f"[{'PASS' if bright > 20 else 'FAIL'}] clock text visible ({bright} px)")
-    return bright > 20
+    expect(vm, [(900, 1070, PANEL_RGB, 40)], "panel painted", tmp_path)
+    img = load_image(vm, tmp_path / "lb-clock.ppm")
+    bright = count_bright(img, (1700, 1920, 1050, 1075), 450, step=1)
+    return report(bright > 20, f"clock text visible ({bright} px)")
 
 
-def test_apps_alive(vm: Machine, tmp_path: Path) -> bool:
+def test_apps_alive(vm, tmp_path: Path) -> bool:
     """Boot windows must be on screen: sysmon dark bg at (900,100)."""
     return expect(vm, [
-        (900, 100, (30, 30, 46), 30),
-        (900, 1070, (13, 27, 42), 30),
+        (900, 100, WINDOW_RGB, 30),
+        (900, 1070, PANEL_RGB, 30),
     ], "desktop windows + panel alive", tmp_path)
 
 
-def test_el0_app(vm: Machine, tmp_path: Path) -> bool:
-    """Start the EL0 GUI app, verify its window renders, click it."""
-    import shutil
+def probe_el0_window(vm, tmp_path: Path):
+    """Screendump for ~10s until the EL0 window shows; returns (hits, image)."""
+    hits, img = 0, None
+    for probe in range(12):
+        img = load_image(vm, tmp_path / "lb-el0-try.ppm")
+        hits = count_gradient_px(img)
+        print(f"  probe {probe}: {hits} px")
+        if hits > EL0_RENDER_MIN_PX:
+            break
+        time.sleep(0.8)
+    return hits, img
 
-    def count_hits(path: Path):
-        im = Image.open(path).convert("RGB")
-        w, h = im.size
 
-        def col(px):
-            c = im.getpixel(px)
-            return (c not in [(30, 30, 46), (0, 0, 0), (56, 63, 79)]
-                    and abs(c[0] - c[1]) + abs(c[1] - c[2]) > 50)
-
-        return sum(1 for y in range(630, min(810, h - 2), 3)
-                   for x in range(70, min(340, w - 2), 3)
-                   if col((x, y))), (w, h)
-
-    vm.shell("\n", timeout=10.0)  # handshake
-    rendered = False
+def start_el0_window(vm, tmp_path: Path):
+    """Run the foreground GUI app (typed, not awaited) until its window renders."""
     for attempt in range(3):
-        vm.shell("run /sd/guiapp", timeout=5.0)
-        for probe in range(12):
-            vm.screenshot(tmp_path / "lb-el0-try.ppm")
-            img = Image.open(tmp_path / "lb-el0-try.ppm").convert("RGB")
-            W, H = img.size
-
-            def colorful(px):
-                c = img.getpixel(px)
-                return (c not in [(30, 30, 46), (0, 0, 0), (56, 63, 79)]
-                        and abs(c[0] - c[1]) + abs(c[1] - c[2]) > 50)
-
-            hits = sum(1 for y in range(630, min(810, H - 2), 3)
-                       for x in range(70, min(340, W - 2), 3)
-                       if colorful((x, y)))
-            print(f"  probe {probe}: {hits} px")
-            if hits > 2000:
-                break
-            time.sleep(0.8)
-        if hits > 2000:
-            print(f"[PASS] EL0 window renders ({hits} gradient px, attempt {attempt + 1})")
-            shutil.copy(tmp_path / "lb-el0-try.ppm", tmp_path / "lb-el0-pre.ppm")
-            rendered = True
-            break
+        # `run /sd/guiapp` keeps the console until the app exits, so the
+        # line is typed and the screen is polled instead of using shell().
+        vm.send_line("run /sd/guiapp")
+        time.sleep(0.5)
+        hits, img = probe_el0_window(vm, tmp_path)
+        if hits > EL0_RENDER_MIN_PX:
+            report(True, f"EL0 window renders ({hits} gradient px, attempt {attempt + 1})")
+            return img
         print(f"[retry] EL0 window not visible ({hits} px, attempt {attempt + 1})")
-    if not rendered:
-        print("[FAIL] EL0 window never rendered")
-        return False
+    print("[FAIL] EL0 window never rendered")
+    return None
 
-    def bands(path: Path):
-        im = Image.open(path).convert("RGB")
-        w, h = im.size
-        ys = [y for y in range(636, min(636 + 6 * 28, h - 2), 28)]
-        return [im.getpixel((min(200, w - 2), y)) for y in ys]
 
-    time.sleep(1.5)
-    vm.click(200, min(715, H - 40))
+def click_el0_window(vm, tmp_path: Path, height: int) -> int:
+    """Click the window; poll ~12s for the white cross the app draws."""
+    vm.click(EL0_CLICK_XY[0], min(EL0_CLICK_XY[1], height - 40))
     whites = 0
-    for i in range(8):
+    for _ in range(8):
         time.sleep(1.5)
-        vm.screenshot(tmp_path / "lb-el0-post.ppm")
-        img2 = Image.open(tmp_path / "lb-el0-post.ppm").convert("RGB")
-        W2, H2 = img2.size
-        whites = sum(1 for y in range(630, min(810, H2 - 2), 2)
-                     for x in range(70, min(340, W2 - 2), 2)
-                     if img2.getpixel((x, y)) == (255, 255, 255))
-        if whites > 30:
+        whites = count_white_px(load_image(vm, tmp_path / "lb-el0-post.ppm"))
+        if whites > EL0_CLICK_MIN_WHITE_PX:
             break
-    print(f"[{'PASS' if whites > 30 else 'FAIL'}] EL0 app received the click ({whites} white cross px)")
-    changed = 999 if whites > 30 else 0
-    need = 30
+    return whites
 
+
+def wait_el0_exit(vm, tmp_path: Path) -> None:
+    """The 600-frame demo takes ~2 minutes under TCG; wait for its window to go."""
     for _ in range(150):
-        vm.screenshot(tmp_path / "lb-el0-done.ppm")
-        hits2, _ = count_hits(tmp_path / "lb-el0-done.ppm")
-        if hits2 < 500:
-            break
+        img = load_image(vm, tmp_path / "lb-el0-done.ppm")
+        if count_gradient_px(img) < EL0_GONE_MAX_PX:
+            return
         time.sleep(1.0)
-    return changed >= need
 
 
-def test_bg_app(vm: Machine, tmp_path: Path) -> bool:
+def test_el0_app(vm, tmp_path: Path) -> bool:
+    """Start the EL0 GUI app, verify its window renders, click it."""
+    time.sleep(1.0)
+    img = start_el0_window(vm, tmp_path)
+    if img is None:
+        return False
+    time.sleep(1.5)  # let the app reach steady state before clicking
+    whites = click_el0_window(vm, tmp_path, img.size[1])
+    clicked = report(whites > EL0_CLICK_MIN_WHITE_PX,
+                     f"EL0 app received the click ({whites} white cross px)")
+    wait_el0_exit(vm, tmp_path)
+    return clicked
+
+
+def test_bg_app(vm, tmp_path: Path) -> bool:
     """S2: `run <path> &` spawns a sliced background EL0 app."""
-    vm.shell("\n", timeout=10.0)  # handshake
-    el0_before = vm.serial_bytes().count(b"'EL0 App'")
-    vm.shell("run /sd/guiapp &", timeout=10.0)
+    el0_before = serial_count(vm, b"'EL0 App'")
+    vm.shell("run /sd/guiapp &", timeout=SHELL_READY_TIMEOUT_S)
     time.sleep(2.0)
 
-    before = vm.serial_bytes().count(b"Uptime:")
-    vm.shell("uptime", timeout=5.0)
-    shell_ok = False
-    for _ in range(15):
-        if vm.serial_bytes().count(b"Uptime:") > before:
-            shell_ok = True
-            break
-        time.sleep(1.0)
-    print(f"[{'PASS' if shell_ok else 'FAIL'}] shell responds during bg app")
+    before = serial_count(vm, UPTIME_MARKER)
+    vm.send_line("uptime")
+    shell_ok = report(wait_count_above(vm, UPTIME_MARKER, before, 15.0),
+                      "shell responds during bg app")
 
-    windows = vm.serial_bytes().count(b"Created window id=")
-    el0_windows = vm.serial_bytes().count(b"'EL0 App'") - el0_before
-    one_window = el0_windows == 1
-    print(f"[{'PASS' if one_window else 'FAIL'}] bg app created {el0_windows} window (want 1)")
+    el0_windows = serial_count(vm, b"'EL0 App'") - el0_before
+    one_window = report(el0_windows == 1, f"bg app created {el0_windows} window (want 1)")
 
     for _ in range(150):
         vm.screenshot(tmp_path / "lb-bg-done.ppm")
-        if vm.serial_bytes().count(b"exited with code") > 0:
+        if serial_count(vm, EXITED_MARKER) > 0:
             break
         time.sleep(1.0)
-    exited = vm.serial_bytes().count(b"exited with code") > 0
-    print(f"[{'PASS' if exited else 'FAIL'}] bg app ran to completion")
+    exited = report(serial_count(vm, EXITED_MARKER) > 0, "bg app ran to completion")
     return shell_ok and one_window and exited
 
 
-def test_python(vm: Machine, tmp_path: Path) -> bool:
+def test_python(vm, tmp_path: Path) -> bool:
     """B8: python runs the embedded MicroPython REPL as an EL0 process."""
-    vm.shell("\n", timeout=10.0)  # handshake
-    vm.shell("python", timeout=10.0)
-    before = vm.serial_bytes().count(b">>>")
-    vm.shell("print(sum(i*i for i in range(10)))", timeout=10.0)
-    ok = vm.serial_bytes().count(b"285") > 0  # sum of squares 0..9
-    print(f"[{'PASS' if ok else 'FAIL'}] python executed code (285)")
-    vm.type_serial("\x04")  # EOT
+    vm.send_line("python")
+    repl_offset = vm.wait_serial(b">>>", 20.0)
+    vm.send_line("print(sum(i*i for i in range(10)))")
+    try:
+        vm.wait_serial(b"285", 15.0, since_offset=repl_offset)  # sum of squares 0..9
+        ok = True
+    except VmError:
+        ok = False
+    report(ok, "python executed code (285)")
+    vm.type_serial(CTRL_D)  # EOF leaves the REPL
     time.sleep(2.0)
-    vm.shell("\n", timeout=5.0)
+    vm.send_line("")
     return ok
 
 
-def test_calc_keys(vm: Machine, tmp_path: Path) -> bool:
+def test_calc_keys(vm, tmp_path: Path) -> bool:
     """B6.2 + Q1a regression: Calculator accepts keyboard input AND 5 % 0 must not panic."""
-    vm.shell("\n", timeout=10.0)  # handshake
-    boot_banners = vm.serial_bytes().count(b"initialization complete")
+    boot_banners = serial_count(vm, b"initialization complete")
 
     vm.click(120, 140)  # focus Calculator window
     time.sleep(0.5)
 
-    # Type 5 % 0 = via set-1 scancodes
-    vm.key(0x06)                   # 5
-    vm.key(0x08, mods="shift")     # %
-    vm.key(0x0B)                   # 0
-    vm.key(0x1C)                   # Enter
+    vm.key(KEY_SC["5"])
+    vm.key(KEY_SC["pct"], mods="shift")
+    vm.key(KEY_SC["0"])
+    vm.key(KEY_SC["enter"])
     time.sleep(1.5)
 
-    vm.shell("\n", timeout=10.0)  # handshake
-    vm.shell("calc", timeout=5.0)
-    calc_ok = vm.serial_bytes().count(b"Calculator state") > 0 or True
+    ensure_shell(vm)
+    vm.send_line("calc")  # state hook; output is informational only
+    time.sleep(1.0)
 
-    alive = vm.serial_bytes().count(b"initialization complete") == boot_banners
-    print(f"[{'PASS' if alive else 'FAIL'}] calc 5%0: no kernel panic (banner count stable)")
-    return alive
+    # The real regression check: the kernel must still be alive (no panic
+    # restart, so the boot banner count is unchanged).
+    alive = serial_count(vm, b"initialization complete") == boot_banners
+    return report(alive, "calc 5%0: no kernel panic (banner count stable)")
 
 
-def test_ctrl_c(vm: Machine, tmp_path: Path) -> bool:
+def test_ctrl_c(vm, tmp_path: Path) -> bool:
     """Q2/Q6 regression: Ctrl+C chord reaches the guest."""
-    vm.shell("\n", timeout=10.0)  # handshake
-
     vm.click(400, 200)  # focus Terminal window
     time.sleep(0.5)
 
-    # Half-typed line, then Ctrl+C (0x2E + ctrl) should abort it
-    for sc in (0x23, 0x12, 0x1D):  # h, e, l
-        vm.key(sc)
-    vm.key(0x2E, mods="ctrl")
+    # Half-typed line, then Ctrl+C aborts it.
+    for letter in "hel":
+        vm.key(KEY_SC[letter])
+    vm.key(KEY_SC["c"], mods="ctrl")
     time.sleep(1.0)
-    vm.shell("\n", timeout=5.0)
-    vm.shell("uptime", timeout=5.0)
-    ok = vm.serial_bytes().count(b"Uptime:") > 0
-    print(f"[{'PASS' if ok else 'FAIL'}] Ctrl+C chord reaches guest; shell still alive")
-    return ok
+    vm.send_line("")
+    try:
+        ensure_shell(vm)  # the guest must answer 'uptime' again
+        ok = True
+    except VmError as error:
+        print(f"      {error}")
+        ok = False
+    return report(ok, "Ctrl+C chord reaches guest; shell still alive")
 
 
-def test_pkg_install(vm: Machine, tmp_path: Path) -> bool:
+def test_pkg_install(vm, tmp_path: Path) -> bool:
     """B6.4: pkg install downloads a real package, installed app must run."""
-    vm.shell("\n", timeout=10.0)  # handshake
-    vm.shell("pkg install hello", timeout=30.0)
-    installed = vm.serial_bytes().count(b"installed successfully") > 0
-    print(f"[{'PASS' if installed else 'FAIL'}] pkg install hello (download+verify+extract)")
+    vm.shell("pkg install hello", timeout=PKG_INSTALL_TIMEOUT_S)
+    installed = report(serial_count(vm, b"installed successfully") > 0,
+                       "pkg install hello (download+verify+extract)")
     if not installed:
         return False
-    vm.shell("run /apps/hello &", timeout=15.0)
-    ran = vm.serial_bytes().count(b"'Hello App'") > 0
-    print(f"[{'PASS' if ran else 'FAIL'}] installed app launches (Hello App window)")
-    for _ in range(60):
-        if vm.serial_bytes().count(b"bg PID") > 0 and vm.serial_bytes().count(b"exited with code") > 0:
+    spawn_offset = len(vm.serial_bytes())
+    vm.shell("run /apps/hello &", timeout=SHELL_READY_TIMEOUT_S)
+    try:
+        vm.wait_serial(b"'Hello App'", 30.0, since_offset=spawn_offset)
+        ran = True
+    except VmError:
+        ran = False
+    report(ran, "installed app launches (Hello App window)")
+    wait_hello_exit(vm, spawn_offset)
+    return ran
+
+
+def wait_hello_exit(vm, spawn_offset: int) -> None:
+    """Let the short demo (150 frames) finish before later tests."""
+    try:
+        vm.wait_serial(EXITED_MARKER, 120.0, since_offset=spawn_offset)
+    except VmError as error:
+        print(f"[harness] hello app did not report exit: {error}")
+
+
+def resize_to_target(vm, tmp_path: Path):
+    """Poll screendumps until the fb is resized and the panel repainted.
+
+    The shell prompt returns as soon as the mode switch is requested; the
+    desktop repaint (panel re-anchor) follows a few frames later, so a
+    single immediate screendump sees the new size but a stale panel.
+    """
+    deadline = time.monotonic() + RESIZE_SETTLE_TIMEOUT_S
+    img = load_image(vm, tmp_path / "lb-res.ppm")
+    while time.monotonic() < deadline:
+        panel_ok = img.getpixel(RESIZED_PANEL_XY) == PANEL_RGB if img.size == RESIZED_SIZE else False
+        if panel_ok:
             break
-        time.sleep(2.0)
-    return installed and ran
+        time.sleep(0.5)
+        img = load_image(vm, tmp_path / "lb-res.ppm")
+    return img
 
 
-def test_resolution(vm: Machine, tmp_path: Path) -> bool:
+def test_resolution(vm, tmp_path: Path) -> bool:
     """Type 'resolution 1280 720', expect fb resize and panel re-anchor."""
-    from PIL import Image
-    vm.shell("\n", timeout=10.0)
     img = None
     for attempt in range(3):
-        vm.shell("resolution 1280 720", timeout=10.0)
-        vm.screenshot(tmp_path / "lb-res.ppm")
-        img = Image.open(tmp_path / "lb-res.ppm").convert("RGB")
-        if img.size == (1280, 720):
+        vm.shell("resolution 1280 720", timeout=SHELL_READY_TIMEOUT_S)
+        img = resize_to_target(vm, tmp_path)
+        if img.size == RESIZED_SIZE:
             break
         print(f"[retry] fb still {img.size} (attempt {attempt + 1})")
-    ok_size = img.size == (1280, 720)
-    print(f"[{'PASS' if ok_size else 'FAIL'}] framebuffer resized to {img.size} (want 1280x720)")
-    panel_ok = img.getpixel((640, 700)) == (13, 27, 42)
-    print(f"[{'PASS' if panel_ok else 'FAIL'}] panel re-anchored at new bottom")
+    ok_size = report(img.size == RESIZED_SIZE,
+                     f"framebuffer resized to {img.size} (want 1280x720)")
+    panel_ok = report(img.getpixel(RESIZED_PANEL_XY) == PANEL_RGB,
+                      "panel re-anchored at new bottom")
     return ok_size and panel_ok
 
 
 # Order: el0_app first (pristine post-boot flow), then GUI-click tests,
-# then bg_app after el0's app has exited, resolution last (shrinks fb)
+# then bg_app after el0's app has exited, resolution late because it
+# shrinks the fb (calc_keys/ctrl_c do not sample the lower screen).
 TESTS = {
     "el0_app": test_el0_app,
     "start_menu": test_start_menu,
@@ -439,7 +481,11 @@ class JUnitBuilder:
 # ─── Main harness ────────────────────────────────────────────────────
 
 class HarnessVM:
-    """Thin wrapper around lobstervm.Machine for throwaway harness runs."""
+    """Throwaway VM on a qcow2 overlay, wrapping lobstervm.Machine.
+
+    Input helpers use the legacy harness pacing so the guest has time to
+    consume each event.
+    """
 
     def __init__(self, name: str, kernel: str, display: str = "none"):
         self.name = name
@@ -447,147 +493,142 @@ class HarnessVM:
         self.display = display
         self.store = VmStore()
         self.machine = None
-        self._tmpdir = None
+        self.tmpdir = None
 
     def start(self) -> int:
-        """Create throwaway VM with qcow2 overlay, boot it."""
-        self._tmpdir = Path(tempfile.mkdtemp(prefix=f"harness-{self.name}-"))
-        print(f"[harness] Runtime dir: {self._tmpdir}")
-
-        # Create a unique VM config that uses a throwaway overlay
-        config = VmConfig(
-            name=self.name,
-            memory_gb=4,
-            resolution="1920x1080",
-            display=self.display,
-            audio=False,
-            kernel=self.kernel,
-            extra_args=[]
-        )
-        # Create the VM in the store (this creates the qcow2 overlay on base image)
-        self.store.create(config)
-
+        """Create the throwaway VM with a qcow2 overlay and boot to the desktop."""
+        self.tmpdir = Path(tempfile.mkdtemp(prefix=f"harness-{self.name}-"))
+        print(f"[harness] Scratch dir: {self.tmpdir}")
+        self.store.create(VmConfig(
+            name=self.name, memory_gb=4, resolution="1920x1080",
+            display=self.display, audio=False, kernel=self.kernel, extra_args=[]))
         self.machine = Machine(self.name, self.store)
         pid = self.machine.start(display=self.display)
         print(f"[harness] Started VM {self.name} (pid {pid})")
-
-        # Wait for monitor socket
-        deadline = time.monotonic() + 20.0
-        while time.monotonic() < deadline:
-            if self.machine.monitor_path.exists():
-                break
-            time.sleep(0.2)
-        else:
-            raise VmError("QEMU monitor socket never appeared")
-
-        # Wait for desktop-ready marker
-        self.machine._wait_serial(DESKTOP_READY_MARKER, 0, BOOT_TIMEOUT_S)
+        self.machine.wait_serial(DESKTOP_READY_MARKER, BOOT_TIMEOUT_S)
         time.sleep(1.0)  # one extra desktop frame before driving the UI
-
-        # Handle C5 greeter if present
-        for _ in range(10):
-            serial = self.machine.serial_bytes()
-            if LOGIN_WAIT_MARKER in serial:
-                break
-            if b"initialization complete" in serial:
-                break
-            time.sleep(1.0)
-        if LOGIN_WAIT_MARKER in self.machine.serial_bytes() and b"[login]" not in self.machine.serial_bytes():
-            self.machine.hmp("lmouse 960 530", expect_reply=False)
-            time.sleep(0.3)
-            self.machine.hmp("lclick 1", expect_reply=False)
-            time.sleep(0.15)
-            self.machine.hmp("lclick 0", expect_reply=False)
-            time.sleep(2.0)
-
+        self._pass_greeter()
         return pid
 
-    def stop(self):
-        """Cleanly shut down and delete the throwaway VM."""
-        if self.machine and self.machine.is_running():
-            try:
+    def _pass_greeter(self) -> None:
+        """C5 greeter: with multi-user disks boot blocks at a login card."""
+        for _ in range(10):
+            serial = self.machine.serial_bytes()
+            if LOGIN_WAIT_MARKER in serial or b"initialization complete" in serial:
+                break
+            time.sleep(1.0)
+        serial = self.machine.serial_bytes()
+        if LOGIN_WAIT_MARKER not in serial or b"[login]" in serial:
+            return
+        self.machine.hmp("lmouse 960 530", expect_reply=False)
+        time.sleep(0.3)
+        self.machine.hmp("lclick 1", expect_reply=False)
+        time.sleep(0.15)
+        self.machine.hmp("lclick 0", expect_reply=False)
+        time.sleep(2.0)
+
+    def stop(self) -> None:
+        """Power off and delete the throwaway VM; always removes its files."""
+        try:
+            self._power_off()
+        finally:
+            self._remove_files()
+
+    def _power_off(self) -> None:
+        if self.machine is None:
+            return
+        try:
+            if self.machine.is_running():
                 self.machine.poweroff()
-            except Exception:
-                pass
-        # Delete the VM (removes the overlay disk)
+        except (VmError, OSError) as error:
+            print(f"[harness] power-off of {self.name} failed: {error}")
+
+    def _remove_files(self) -> None:
         try:
             self.store.delete(self.name)
-        except Exception:
-            pass
-        # Clean up temp dir
-        if self._tmpdir and self._tmpdir.exists():
-            import shutil
-            shutil.rmtree(self._tmpdir, ignore_errors=True)
-
-    def __getattr__(self, item):
-        """Delegate to the underlying Machine."""
-        return getattr(self.machine, item)
+        except (VmError, OSError) as error:
+            print(f"[harness] could not delete VM {self.name}: {error}")
+        if self.machine is not None:
+            shutil.rmtree(self.machine.runtime_dir, ignore_errors=True)
+        if self.tmpdir is not None:
+            shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def serial_bytes(self) -> bytes:
         return self.machine.serial_bytes()
 
-    def type_serial(self, text: str):
+    def type_serial(self, text: str) -> None:
         self.machine.type_serial(text)
+
+    def send_line(self, text: str) -> None:
+        self.machine.send_line(text)
+
+    def wait_serial(self, marker: bytes, timeout: float, since_offset: int = 0) -> int:
+        return self.machine.wait_serial(marker, timeout, since_offset)
 
     def shell(self, command: str, timeout: float = 60.0) -> str:
         return self.machine.shell(command, timeout)
 
-    def click(self, x: int, y: int, button=MOUSE_LEFT, hold_s=0.15):
-        self.machine.click(x, y, button, hold_s)
+    def click(self, x: int, y: int) -> None:
+        self.machine.mouse_move(x, y)
+        time.sleep(MOVE_SETTLE_S)
+        self.machine.mouse_button(True, MOUSE_LEFT)
+        time.sleep(CLICK_HOLD_S)
+        self.machine.mouse_button(False, MOUSE_LEFT)
+        time.sleep(CLICK_SETTLE_S)
 
-    def key(self, scancode: int, mods: str = ""):
+    def key(self, scancode: int, mods: str = "") -> None:
         self.machine.key(scancode, mods)
+        time.sleep(KEY_SETTLE_S)
 
-    def screenshot(self, path: Path):
-        self.machine.screenshot(str(path))
+    def screenshot(self, path: Path) -> None:
+        self.machine.screenshot(path)
 
-    def hmp(self, line: str, expect_reply=True):
-        return self.machine.hmp(line, expect_reply)
+
+def run_one_test(vm: HarnessVM, name: str, junit: JUnitBuilder) -> bool:
+    """Run one test from a known guest state and record it in the JUnit report."""
+    start = time.time()
+    try:
+        ensure_shell(vm)
+        result = TESTS[name](vm, vm.tmpdir)
+        message = "" if result else f"Test {name} failed"
+    except (VmError, OSError) as error:
+        print(f"[FAIL] {name}: {error}")
+        result, message = False, str(error)
+    junit.add_result(name, result, time.time() - start, message)
+    return result
 
 
 def run_tests(args) -> int:
     """Run the selected tests and produce JUnit XML."""
-    harness_name = f"harness-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    harness_name = f"harness-{uuid.uuid4().hex[:8]}"
     junit = JUnitBuilder()
-    results = {}
-
     vm = HarnessVM(harness_name, kernel=args.kernel, display=args.display)
-    try:
-        vm.start()
-    except Exception as e:
-        print(f"[FAIL] VM startup: {e}")
-        junit.add_result("vm_startup", False, 0.0, str(e))
-        junit.write(Path(args.junit))
-        print(f"\nJUnit results written to {args.junit}")
-        return 1
-
     names = list(TESTS) if args.test == "all" else [args.test]
+    results = {}
     try:
+        try:
+            vm.start()
+        except (VmError, OSError) as error:
+            print(f"[FAIL] VM startup: {error}")
+            junit.add_result("vm_startup", False, 0.0, str(error))
+            return finish(junit, args, results, startup_failed=True)
         for name in names:
-            start = time.time()
-            try:
-                result = TESTS[name](vm, vm._tmpdir)
-                duration = time.time() - start
-                results[name] = result
-                junit.add_result(name, result, duration,
-                                 "" if result else f"Test {name} failed")
-            except Exception as e:  # noqa: BLE001 — harness reports, not crashes
-                duration = time.time() - start
-                print(f"[FAIL] {name}: {e}")
-                results[name] = False
-                junit.add_result(name, False, duration, str(e))
+            results[name] = run_one_test(vm, name, junit)
     finally:
         vm.stop()
+    return finish(junit, args, results)
 
+
+def finish(junit: JUnitBuilder, args, results: dict, startup_failed: bool = False) -> int:
     junit.write(Path(args.junit))
     print(f"\nJUnit results written to {args.junit}")
-
+    if startup_failed:
+        return 1
     passed = sum(1 for v in results.values() if v)
     print(f"\n{passed}/{len(results)} tests passed")
     if passed != len(results):
         for name, result in results.items():
-            status = "PASS" if result else "FAIL"
-            print(f"  [{status}] {name}")
+            print(f"  [{'PASS' if result else 'FAIL'}] {name}")
     return 0 if passed == len(results) else 1
 
 
@@ -606,8 +647,8 @@ def main():
     args = ap.parse_args()
 
     if Image is None:
-        print("WARNING: PIL/Pillow not installed; pixel assertions will be skipped")
-
+        print(PILLOW_MISSING_MESSAGE, file=sys.stderr)
+        return 2
     return run_tests(args)
 
 
