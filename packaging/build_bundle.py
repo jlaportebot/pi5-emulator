@@ -8,11 +8,16 @@ The result follows ``packaging/LAYOUT.md``; ``<out>/LobsterVM`` (or
 ``<out>/LobsterVM.app`` on macOS) is what an installer ships.
 """
 import argparse
+import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
+
+import make_icons
 
 PACKAGING_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGING_DIR.parent
@@ -30,6 +35,7 @@ def exe_suffix():
 
 def run_pyinstaller(work_dir, dist_dir):
     """Build the onedir (and the .app on macOS) into ``dist_dir``."""
+    make_icons.make_icons(PACKAGING_DIR / "icons")
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                "--workpath", str(work_dir), "--distpath", str(dist_dir), str(SPEC_FILE)]
     subprocess.run(command, check=True, cwd=REPO_ROOT)
@@ -65,10 +71,29 @@ def add_guest_files(root, files):
         shutil.copyfile(source, share / name)
 
 
+def extract_qemu_archive(archive, destination):
+    """Unpack a lobster-qemu ``.tar.gz``/``.zip``; return its single top directory."""
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as zipped:
+            zipped.extractall(destination)
+    else:
+        with tarfile.open(archive) as tarred:
+            tarred.extractall(destination, filter="data")
+    roots = [entry for entry in destination.iterdir() if entry.is_dir()]
+    if len(roots) != 1:
+        raise SystemExit(f"{archive.name}: expected one top directory, found {len(roots)}")
+    return roots[0]
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--qemu-dir", type=Path, required=True,
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--qemu-dir", type=Path,
                         help="extracted lobster-qemu archive root (contains bin/)")
+    source.add_argument("--qemu-archive", type=Path,
+                        help="lobster-qemu .tar.gz or .zip for this platform")
+    parser.add_argument("--versions", type=Path, help="VERSIONS.txt to ship in share/lobsteros")
+    parser.add_argument("--version", default="nightly", help="version stamped on the app")
     parser.add_argument("--kernel", type=Path, required=True, help="kernel8.img")
     parser.add_argument("--dtb", type=Path, required=True, help="bcm2712-rpi-5-b.dtb")
     parser.add_argument("--base", type=Path, required=True, help="lobsteros.img")
@@ -76,18 +101,26 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
+def guest_files(args):
+    files = [(args.kernel, "kernel8.img"), (args.dtb, "bcm2712-rpi-5-b.dtb"),
+             (args.base, "lobsteros.img")]
+    if args.versions:
+        files.append((args.versions, "VERSIONS.txt"))
+    return files
+
+
 def main(argv=None):
     args = parse_args(argv)
-    check_qemu_dir(args.qemu_dir)
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    os.environ["LOBSTERVM_VERSION"] = args.version
     with tempfile.TemporaryDirectory(dir=out) as work:
-        run_pyinstaller(Path(work), out)
-    root = bundle_root(out)
-    add_qemu(root, args.qemu_dir)
-    add_guest_files(root, [(args.kernel, "kernel8.img"),
-                           (args.dtb, "bcm2712-rpi-5-b.dtb"),
-                           (args.base, "lobsteros.img")])
+        qemu_dir = args.qemu_dir or extract_qemu_archive(args.qemu_archive, Path(work))
+        check_qemu_dir(qemu_dir)
+        run_pyinstaller(Path(work) / "build", out)
+        root = bundle_root(out)
+        add_qemu(root, qemu_dir)
+    add_guest_files(root, guest_files(args))
     print(f"bundle ready: {root}")
     return 0
 

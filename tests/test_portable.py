@@ -505,5 +505,28 @@ class TestFirstRun(TempDirCase):
             self.assertEqual(firstrun.missing_components_message(), "")
 
 
+class TestQuickstartCommand(TempDirCase):
+    def run_quickstart(self, store, problem=""):
+        from lobstervm import cli
+        base = self.tmp / "base.img"
+        base.write_bytes(b"")
+        with patch.object(firstrun, "missing_components_message", return_value=problem), \
+                patch("lobstervm.config.run_qemu_img"), \
+                patch.dict(os.environ, {"LOBSTER_BASE_DISK": str(base)}):
+            return cli.cmd_quickstart(store, None)
+
+    def test_creates_default_vm_once(self):
+        store = VmStore(self.tmp / "vms")
+        self.assertEqual(self.run_quickstart(store), 0)
+        self.assertEqual(store.list_names(), ["LobsterOS"])
+        self.assertEqual(self.run_quickstart(store), 0)
+        self.assertEqual(store.list_names(), ["LobsterOS"])
+
+    def test_missing_components_fail_without_creating(self):
+        store = VmStore(self.tmp / "vms")
+        self.assertEqual(self.run_quickstart(store, "kernel8.img not found"), 1)
+        self.assertEqual(store.list_names(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
