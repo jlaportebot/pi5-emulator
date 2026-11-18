@@ -47,7 +47,15 @@ class TestCountTextLines(unittest.TestCase):
         return img
 
     def test_counts_separate_bands(self):
-        img = self.make_image([2, 3, 4, 10, 11, 12, 13])
+        img = self.make_image([2, 3, 4, 5, 6, 12, 13, 14, 15, 16])
+        self.assertEqual(gui_test_vm.count_text_lines(img, (0, 20, 0, 40)), 2)
+
+    def test_fragment_below_a_line_is_not_a_line(self):
+        img = self.make_image([2, 3, 4, 5, 6, 7, 8, 11])
+        self.assertEqual(gui_test_vm.count_text_lines(img, (0, 20, 0, 40)), 1)
+
+    def test_lines_one_pixel_apart_are_two_lines(self):
+        img = self.make_image([2, 3, 4, 5, 6, 8, 9, 10, 11, 12])
         self.assertEqual(gui_test_vm.count_text_lines(img, (0, 20, 0, 40)), 2)
 
     def test_blank_area_has_no_lines(self):
@@ -55,7 +63,7 @@ class TestCountTextLines(unittest.TestCase):
         self.assertEqual(gui_test_vm.count_text_lines(img, (0, 20, 0, 40)), 0)
 
     def test_box_limits_the_scan(self):
-        img = self.make_image([2, 30])
+        img = self.make_image([2, 3, 4, 5, 6, 30, 31, 32, 33, 34])
         self.assertEqual(gui_test_vm.count_text_lines(img, (0, 20, 20, 40)), 1)
 
 

@@ -32,12 +32,12 @@ export LOBSTERVM_HOME=<scratch>/vmhome LOBSTERVM_RUNTIME=<scratch>/vmrun
 
 ## Tests
 
-- Unit tests: `python3 -m unittest discover -s tests` -> `Ran 172 tests`, `OK`
-  (test_disk 37, test_gui_harness_helpers 8, test_gui_helpers 30, test_lobstervm 74,
+- Unit tests: `python3 -m unittest discover -s tests` -> `Ran 174 tests`, `OK`
+  (test_disk 37, test_gui_harness_helpers 10, test_gui_helpers 30, test_lobstervm 74,
   test_machine_command 6, test_mkbase 17; counts of `def test_` methods).
 - Lint: `ruff check lobstervm/ tools/ tests/` (ruff 0.15.15) -> `All checks passed!`
 - `bash tools/check.sh` -> exit 0.
-- GUI harness: `python3 tools/gui_test_vm.py --kernel $LOBSTER_KERNEL` -> `12/12 tests passed`,
+- GUI harness: `python3 tools/gui_test_vm.py --kernel $LOBSTER_KERNEL` -> `12/12 tests passed` on aa9d2c8 and on wave2-b4dd4a1 (two runs each),
   run twice in a row with identical results. Tests: el0_app, start_menu,
   start_menu_esc, clock, apps, bg_app, python, pkg_install, resolution, calc_keys,
   ctrl_c, welcome_once. `start_menu_esc` reports `[XFAIL]` (see known issues) and

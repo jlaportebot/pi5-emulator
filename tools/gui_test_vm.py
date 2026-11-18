@@ -103,6 +103,9 @@ FILES_BODY_RGB = (246, 248, 250)
 CALC_TITLE_XY = (260, 154)        # Calculator title bar (focus target)
 TERMINAL_TITLE_XY = (400, 94)     # Terminal title bar (focus target)
 TERMINAL_BODY = (104, 816, 128, 576)  # x0, x1, y0, y1 of the Terminal text area
+# x-height of the 13 px mono face is ~7 rows; descender and accent fragments of
+# anti-aliased text are 1-3 rows and must not count as a text line.
+MIN_TEXT_BAND_ROWS = 5
 TEXT_RGB_SUM_MIN = 450            # brightness sum separating glyphs from background
 TERMINAL_BANNER_MAX_LINES = 4     # welcome banner is 3 text lines; a log leak is far more
 APP_LAUNCHED_MARKER = "app: launched"
@@ -173,15 +176,15 @@ def app_window_titles(titles: list) -> list:
 
 
 def count_text_lines(img, box, threshold: int = TEXT_RGB_SUM_MIN) -> int:
-    """Number of separate bands of bright pixel rows (text lines) inside box."""
+    """Number of text lines (bands of bright rows at least MIN_TEXT_BAND_ROWS tall) in box."""
     x0, x1, y0, y1 = box
-    lines, in_line = 0, False
+    bands, run = 0, 0
     for y in range(y0, y1):
         has_text = any(sum(img.getpixel((x, y))) > threshold for x in range(x0, x1, 2))
-        if has_text and not in_line:
-            lines += 1
-        in_line = has_text
-    return lines
+        run = run + 1 if has_text else 0
+        if run == MIN_TEXT_BAND_ROWS:
+            bands += 1
+    return bands
 
 
 def load_image(vm, path: Path):
