@@ -124,7 +124,7 @@ CALC_ERROR_DISPLAY = "Error"
 # different layout (QEMU bit1=ctrl is HID LShift), so "ctrl" is what
 # produces Shift in the guest on current kernels; plain "shift" types a '5'.
 PERCENT_MODS = "ctrl"
-MENU_PROBE_POINTS = ((150, 900), (150, 750))
+MENU_PROBE_POINTS = ((150, 900), (300, 750))
 MENU_TOLERANCE = 20  # tighter than the open-check: the desktop behind is within 30 of the menu colour
 MENU_SETTLE_S = 0.8
 
@@ -257,7 +257,7 @@ def test_start_menu(vm, tmp_path: Path) -> bool:
         time.sleep(0.8)
         ok = expect(vm, [
             (150, 900, MENU_RGB, 40),     # menu panel bg
-            (150, 750, MENU_RGB, 40),     # menu panel bg (upper)
+            (300, 750, MENU_RGB, 40),     # menu panel bg (upper)
         ], f"start menu opens on launcher click (attempt {attempt + 1})", tmp_path)
         if ok:
             break
