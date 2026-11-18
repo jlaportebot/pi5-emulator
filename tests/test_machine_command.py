@@ -17,8 +17,20 @@ class TestDeviceProperties(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.store = VmStore(self.tmpdir)
+        # Building the command line resolves the QEMU binary and the kernel;
+        # point both at placeholder files so the tests run on a bare checkout
+        # (CI has neither a QEMU build nor a kernel image).
+        fakes = {}
+        for variable, name in (("LOBSTER_QEMU", "qemu-system-aarch64"),
+                               ("LOBSTER_KERNEL", "kernel8.img")):
+            path = Path(self.tmpdir) / name
+            path.write_bytes(b"")
+            fakes[variable] = str(path)
+        self.env = patch.dict(os.environ, fakes)
+        self.env.start()
 
     def tearDown(self):
+        self.env.stop()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def command(self, **fields):
