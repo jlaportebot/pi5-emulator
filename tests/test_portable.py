@@ -7,6 +7,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -233,6 +234,35 @@ class TestEndpointAndChannel(TempDirCase):
                 client.sendall(b"yo")
                 self.assertEqual(peer.recv(2), b"yo")
                 peer.close()
+
+    def test_send_waits_until_the_server_has_read_everything(self):
+        received = bytearray()
+        with socket.socket() as server:
+            server.bind((channel.LOOPBACK, 0))
+            server.listen(1)
+            endpoint = channel.Endpoint(port=server.getsockname()[1])
+
+            def slow_reader():
+                peer, _ = server.accept()
+                with peer:
+                    while chunk := peer.recv(4):
+                        received.extend(chunk)
+                        time.sleep(0.02)
+
+            thread = threading.Thread(target=slow_reader)
+            thread.start()
+            endpoint.send(b"print(sum(i*i for i in range(10)))\n", drain_timeout=5)
+            thread.join()
+        self.assertEqual(bytes(received), b"print(sum(i*i for i in range(10)))\n")
+
+    def test_send_gives_up_when_the_server_never_reads(self):
+        with socket.socket() as server:
+            server.bind((channel.LOOPBACK, 0))
+            server.listen(1)
+            endpoint = channel.Endpoint(port=server.getsockname()[1])
+            started = time.monotonic()
+            endpoint.send(b"x", drain_timeout=0.3)
+            self.assertLess(time.monotonic() - started, 3)
 
     def test_connect_waits_for_a_late_server(self):
         port = channel.free_port()

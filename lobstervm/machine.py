@@ -225,8 +225,7 @@ class Machine:
         """Send raw text to the guest's serial console."""
         if not self.is_running():
             raise VmError(f"VM {self.name} is not running")
-        with self.serial.locate().connect() as sock:
-            sock.sendall(text.encode())
+        self.serial.locate().send(text.encode())
 
     def shell(self, command, timeout=60.0):
         """Run a guest shell command over serial; return what it printed.
