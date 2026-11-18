@@ -40,16 +40,14 @@ export LOBSTERVM_HOME=<scratch>/vmhome LOBSTERVM_RUNTIME=<scratch>/vmrun
 - GUI harness: `python3 tools/gui_test_vm.py --kernel $LOBSTER_KERNEL` -> `12/12 tests passed` on aa9d2c8 and on wave2-b4dd4a1 (two runs each),
   run twice in a row with identical results. Tests: el0_app, start_menu,
   start_menu_esc, clock, apps, bg_app, python, pkg_install, resolution, calc_keys,
-  ctrl_c, welcome_once. `start_menu_esc` reports `[XFAIL]` (see known issues) and
-  counts as passed.
+  ctrl_c, welcome_once. Since the O3.3 start menu (kernel bd672c9) `start_menu_esc`
+  is a real assertion: Esc must close the menu.
 
 ## Known issues
 
-1. Esc does not close the start menu. The harness prints `[XFAIL]`; it prints
-   `[XPASS]` when a kernel fixes this. The start menu test closes it with a second
-   click on the start button instead.
-2. The Welcome window is not painted on first boot (reported against this kernel build;
-   the harness checks the serial log marker and `wins` output, not the pixels, and passes).
+1. (Fixed in kernel bd672c9, O3.3) Esc did not close the start menu.
+2. (Fixed in kernel b25f94b) The Welcome window was not painted on first boot; the
+   harness still checks the serial log marker and `wins` output, not the pixels.
 3. `dmesg` prints nothing: `./lobstervm.sh shell dm dmesg` returned an empty line.
 4. Shift via the QEMU monitor is read as Ctrl by the guest: `lkey 0x06 shift` types
    `5`, while `lkey 0x06 ctrl` types `%`. QEMU's input flags (bit0 shift, bit1 ctrl)

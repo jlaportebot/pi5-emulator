@@ -132,8 +132,8 @@ output. It covers: EL0 app window, start menu (open, close by click, Esc as an
 expected failure), panel clock, app launching, background app, MicroPython,
 `pkg install`, runtime resolution change, calculator keyboard input with
 `5 % 0` (display must read `Error`, no panic), Ctrl+C, and the one-time Welcome
-window across two boots. It prints `[XFAIL]` for the Esc check on kernels where
-Esc does not close the menu and `[XPASS]` when that starts working. Unit tests
+window across two boots. The Esc check asserts that Esc closes the start menu
+(kernels before the O3.3 start menu, master bd672c9, fail it). Unit tests
 need `LOBSTER_BASE_DISK` pointing at a built base image.
 
 ## Building the QEMU binary

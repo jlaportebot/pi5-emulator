@@ -107,3 +107,55 @@ class TestEnterPercentExpression(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeLauncherVm:
+    """Counts launcher clicks; menu visibility comes from the patched probe."""
+
+    def __init__(self):
+        self.clicks = 0
+
+    def click(self, x, y):
+        self.clicks += 1
+
+
+def no_sleep(_seconds):
+    """Stand-in for time.sleep so polling tests run instantly."""
+
+
+class TestWaitMenuState(unittest.TestCase):
+    def test_returns_true_once_a_late_paint_shows_the_menu(self):
+        states = iter([False, False, True])
+        with patch.object(gui_test_vm, "menu_is_open", lambda vm, path: next(states)), \
+                patch.object(gui_test_vm.time, "sleep", no_sleep):
+            self.assertTrue(gui_test_vm.wait_menu_state(None, Path("."), want_open=True))
+
+    def test_times_out_when_the_state_never_arrives(self):
+        clock = iter(range(100))
+        with patch.object(gui_test_vm, "menu_is_open", lambda vm, path: False), \
+                patch.object(gui_test_vm.time, "sleep", no_sleep), \
+                patch.object(gui_test_vm.time, "monotonic", lambda: next(clock)):
+            self.assertFalse(gui_test_vm.wait_menu_state(None, Path("."), want_open=True,
+                                                         timeout_s=3))
+
+
+class TestOpenStartMenu(unittest.TestCase):
+    def test_slow_paint_does_not_trigger_a_second_toggle_click(self):
+        vm = FakeLauncherVm()
+        states = iter([False, True])
+        with patch.object(gui_test_vm, "menu_is_open", lambda v, path: next(states)), \
+                patch.object(gui_test_vm.time, "sleep", no_sleep):
+            self.assertTrue(gui_test_vm.open_start_menu(vm, Path("."), "menu opens"))
+        self.assertEqual(vm.clicks, 1)
+
+    def test_clicks_again_after_a_missed_click(self):
+        vm = FakeLauncherVm()
+        with patch.object(gui_test_vm, "wait_menu_state", side_effect=[False, True]):
+            self.assertTrue(gui_test_vm.open_start_menu(vm, Path("."), "menu opens"))
+        self.assertEqual(vm.clicks, 2)
+
+    def test_gives_up_after_the_attempt_limit(self):
+        vm = FakeLauncherVm()
+        with patch.object(gui_test_vm, "wait_menu_state", return_value=False):
+            self.assertFalse(gui_test_vm.open_start_menu(vm, Path("."), "menu opens"))
+        self.assertEqual(vm.clicks, gui_test_vm.MENU_OPEN_ATTEMPTS)

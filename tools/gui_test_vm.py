@@ -129,6 +129,11 @@ LEGACY_KERNEL_NOTE = "[note] kernel predates the HID modifier fix"
 MENU_PROBE_POINTS = ((150, 900), (300, 750))
 MENU_TOLERANCE = 20  # tighter than the open-check: the desktop behind is within 30 of the menu colour
 MENU_SETTLE_S = 0.8
+# A loaded TCG host can paint the menu well after MENU_SETTLE_S; poll this long
+# before deciding a click was missed (a second click would toggle it shut).
+MENU_STATE_TIMEOUT_S = 6.0
+MENU_POLL_S = 0.5
+MENU_OPEN_ATTEMPTS = 3
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────
@@ -287,20 +292,36 @@ def close_start_menu(vm, tmp_path: Path) -> bool:
     return report(not menu_is_open(vm, tmp_path), "start menu closes on second launcher click")
 
 
+def wait_menu_state(vm, tmp_path: Path, want_open: bool,
+                    timeout_s: float = MENU_STATE_TIMEOUT_S) -> bool:
+    """Poll the menu probes until the menu is (or is not) shown, or time runs out."""
+    deadline = time.monotonic() + timeout_s
+    while menu_is_open(vm, tmp_path) != want_open:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(MENU_POLL_S)
+    return True
+
+
+def open_start_menu(vm, tmp_path: Path, label: str) -> bool:
+    """Click the launcher until the menu shows; re-click only after a full wait."""
+    for attempt in range(MENU_OPEN_ATTEMPTS):
+        vm.click(*LAUNCHER_XY)
+        if wait_menu_state(vm, tmp_path, want_open=True):
+            return report(True, f"{label} (attempt {attempt + 1})")
+        print(f"[retry] start menu not shown after a launcher click (attempt {attempt + 1})")
+    return report(False, label)
+
+
 def test_start_menu_esc(vm, tmp_path: Path) -> bool:
-    """Esc should close the start menu. Known to fail on kernels without the fix."""
-    vm.click(*LAUNCHER_XY)
-    time.sleep(MENU_SETTLE_S)
-    if not menu_is_open(vm, tmp_path):
-        return report(False, "start menu did not open for the Esc check")
+    """Esc closes the start menu (O3.3)."""
+    if not open_start_menu(vm, tmp_path, "start menu open for the Esc check"):
+        return False
     vm.key(KEY_SC["esc"])
-    time.sleep(MENU_SETTLE_S)
-    closed = not menu_is_open(vm, tmp_path)
-    if closed:
-        print("[XPASS] !!! Esc now closes the start menu: turn this into a real assertion !!!")
-        return True
-    print("[XFAIL] Esc does not close the start menu (expected on kernels without the fix)")
-    return close_start_menu(vm, tmp_path)
+    closed = wait_menu_state(vm, tmp_path, want_open=False)
+    if not closed:
+        close_start_menu(vm, tmp_path)
+    return report(closed, "Esc closes the start menu")
 
 
 def test_panel_clock(vm, tmp_path: Path) -> bool:
