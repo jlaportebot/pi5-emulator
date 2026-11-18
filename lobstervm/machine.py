@@ -36,6 +36,7 @@ POLL_INTERVAL_S = 0.2
 MOUSE_LEFT = 1
 GTK_OPTIONS = "gtk,show-tabs=off,show-cursor=off,grab-on-hover=on"
 VNC_DISPLAY = "vnc=127.0.0.1:9"
+LEGACY_DEVICE_ENV = ("LBST_RES", "LBST_SHARE", "LBST_DISKIMG")
 
 
 class Machine:
@@ -303,6 +304,7 @@ class Machine:
             "-monitor", f"unix:{self.monitor_path},server,nowait",
             "-display", _display_argument(display),
         ]
+        command += _device_arguments(config)
         if not config.audio or display == "none":
             command += ["-audio", "none"]
         if resume:
@@ -311,12 +313,8 @@ class Machine:
 
     def _qemu_env(self):
         env = dict(os.environ)
-        env["LBST_RES"] = self.config.resolution
-        env.pop("LBST_DISKIMG", None)
-        if self.config.shared_folder:
-            env["LBST_SHARE"] = self.config.shared_folder
-        else:
-            env.pop("LBST_SHARE", None)
+        for stale in LEGACY_DEVICE_ENV:
+            env.pop(stale, None)
         return env
 
     def _wait_for_monitor(self, process):
@@ -339,6 +337,23 @@ class Machine:
                 return True
             time.sleep(POLL_INTERVAL_S)
         return False
+
+
+def _qemu_option_value(text):
+    """QEMU option values treat a comma as a separator; a literal one is doubled."""
+    return text.replace(",", ",,")
+
+
+def _device_arguments(config):
+    width, height = config.resolution.split("x")
+    arguments = [
+        "-global", f"lobster-sys.width={width}",
+        "-global", f"lobster-sys.height={height}",
+    ]
+    if config.shared_folder:
+        folder = _qemu_option_value(config.shared_folder)
+        arguments += ["-global", f"lobster-share.dir={folder}"]
+    return arguments
 
 
 def _is_qemu(pid):
