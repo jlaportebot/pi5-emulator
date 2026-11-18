@@ -8,8 +8,15 @@ on:
 
 jobs:
   unit-tests:
-    name: Unit Tests (no QEMU)
-    runs-on: ubuntu-latest
+    name: Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +26,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Windows and macOS runners have no qemu-img or e2fsprogs; the tests
+      # that need them skip, the rest use stand-in images.
       - name: Install qemu-img and e2fsprogs (qcow2 overlays, disk tools)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y qemu-utils e2fsprogs
 
       # The harness helpers analyse screenshots with Pillow (same version as
@@ -28,27 +38,61 @@ jobs:
         run: pip install pillow==12.2.0
 
       - name: Build the base disk image from base-root/
-        run: python3 tools/mkbase.py
+        if: runner.os == 'Linux'
+        run: python tools/mkbase.py
 
       - name: Run unit tests
-        run: python3 -m unittest discover -s tests -v
+        run: python -m unittest discover -s tests -v
 
       - name: Verify gui_test_vm.py syntax
-        run: python3 -c "import ast,sys; ast.parse(open('tools/gui_test_vm.py').read())"
+        run: python -c "import ast,sys; ast.parse(open('tools/gui_test_vm.py').read())"
 
       - name: Verify gui_test_vm.py --help
-        run: python3 tools/gui_test_vm.py --help
+        run: python tools/gui_test_vm.py --help
 
       - name: Verify lobstervm --help
-        run: python3 -m lobstervm --help
+        run: python -m lobstervm --help
 
       - name: Verify lobstervm gui --help
-        run: python3 -m lobstervm gui --help
+        run: python -m lobstervm gui --help
 
       - name: Verify GUI module imports
-        run: python3 -c "import lobstervm.gui; print('gui import ok')"
+        run: python -c "import lobstervm.gui; print('gui import ok')"
         env:
           DISPLAY: ""
+
+  bundle:
+    name: PyInstaller build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyInstaller
+        run: pip install -r packaging/requirements.txt
+
+      - name: Build the onedir
+        run: pyinstaller --noconfirm packaging/lobstervm.spec
+
+      - name: Run the frozen CLI
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            "dist/LobsterVM.app/Contents/MacOS/lobstervm-cli" --help
+          else
+            "dist/LobsterVM/lobstervm-cli" --help
+          fi
 
   lint:
     name: Lint (ruff)
@@ -66,4 +110,4 @@ jobs:
         run: pip install ruff==0.15.15
 
       - name: Run ruff
-        run: ruff check lobstervm/ tools/ tests/
+        run: ruff check lobstervm/ tools/ tests/ packaging/
