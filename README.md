@@ -1,236 +1,161 @@
-# LobsterVM — VirtualBox-style VM Manager for LobsterOS Pi 5 Emulator
+# LobsterVM
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![QEMU](https://img.shields.io/badge/QEMU-9.0+-orange.svg)](https://www.qemu.org/)
+LobsterVM is a VirtualBox-style VM manager plus a QEMU machine model for running
+LobsterOS, a Rust desktop OS for the Raspberry Pi 5, on a Pi 5 or on any
+aarch64 or x86_64 Linux host. The manager (`lobstervm`) is pure Python (standard
+library only; the optional GUI needs `python3-tk`). The machine (`raspi5b`, the
+BCM2712 SoC plus the `lobster-*` devices) lives in a QEMU fork.
 
-**LobsterVM** is a pure-Python VM manager (à la VirtualBox) for the Raspberry Pi 5 (BCM2712) QEMU emulator. It handles persistent VM definitions, qcow2 disk layering, snapshots, and a full **tkinter graphical manager** — no external dependencies beyond the standard library.
+- Kernel (guest OS): https://github.com/jlaportebot/lobster-os
+- QEMU fork: https://github.com/jlaportebot/lobster-qemu, branch `lobster/main`
+- Current verification state and known issues: [STATUS.md](STATUS.md)
 
-The emulator itself lives in the companion QEMU fork (providing `raspi5b` machine, `lobster-net` and `lobster-input` MMIO devices). This repo provides the management layer.
-
----
-
-## 📦 Quick Start
-
-### Prerequisites
-
-**Debian/Ubuntu/Raspberry Pi OS:**
-```bash
-sudo -S -p '' apt-get update && sudo -S -p '' apt-get install -y \
-    qemu-system-arm qemu-utils \
-    python3 python3-tk \
-    libgtk-3-dev  # for QEMU GTK display
-```
-
-You also need the LobsterOS QEMU fork binary at `../qemu-src/build-opt/qemu-system-aarch64` (or set `LOBSTER_QEMU`).
-
-### Install (Desktop Integration)
+## Install
 
 ```bash
-./install.sh
+bash install.sh
 ```
 
-This:
-- Symlinks `lobstervm.sh` → `~/.local/bin/lobstervm` (add to PATH)
-- Installs `lobstervm-gui.desktop` → `~/.local/share/applications/`
-- Installs icon → `~/.local/share/icons/hicolor/256x256/apps/lobstervm.png`
+This links `lobstervm.sh` to `~/.local/bin/lobstervm`, copies
+`lobstervm-gui.desktop` to `~/.local/share/applications/` and the icon to
+`~/.local/share/icons/hicolor/256x256/apps/lobstervm.png`. Make sure
+`~/.local/bin` is on `PATH`. Remove it again with `bash uninstall.sh`.
+Without installing, use `./lobstervm.sh` from the repository root.
 
-After install, run `lobstervm` from any terminal or find **"LobsterVM Manager"** in your application menu.
+Requirements: Python 3.10+, `qemu-utils` (`qemu-img`), `e2fsprogs`, Pillow for
+the GUI harness, and the QEMU fork binary (see "Building the QEMU binary").
+`lobstervm doctor` checks that the kernel, device tree and base disk are found.
 
-### Uninstall
+## Quick start
 
 ```bash
-./uninstall.sh
+lobstervm doctor
+python3 tools/mkbase.py --output lobsteros.img        # once: build the base disk
+lobstervm create myvm --memory 4 --resolution 1280x720
+lobstervm start myvm --headless --wait                # returns when the desktop is up
+lobstervm shell myvm uname                            # run a guest shell command
+lobstervm screenshot myvm shot.png
+lobstervm stop myvm
+lobstervm gui                                         # graphical manager (needs a display)
 ```
 
----
+`lobstervm start myvm` without `--headless` opens a GTK window; `--display`
+selects `gtk`, `sdl`, `vnc` or `none`. Other commands: `list`, `show`, `modify`,
+`delete`, `reset`, `pause`, `resume`, `factory-reset`, `click`, `move`, `drag`,
+`key`, `type`, `hmp`, `serial`. `lobstervm <command> --help` lists the options.
 
-## 🖥 Commands
+## VM settings
 
-All commands via `./lobstervm.sh` (or `lobstervm` after install):
+Set with `create` and changed with `modify` (VM stopped).
 
-| Command | Description |
-|---------|-------------|
-| `list` | List VMs and their state |
-| `doctor` | Check QEMU, kernel, DTB, base disk |
-| `gui` | **Open graphical VM manager (E2.3)** |
-| `create` | Create a new VM |
-| `modify` | Change a VM's settings |
-| `show` | Show a VM's settings and state |
-| `delete` | Delete a VM and its disk |
-| `start` | Boot a VM (`--headless`, `--display`, `--resume TAG`, `--wait`) |
-| `stop` | Shut down cleanly (`--force` for power-off) |
-| `reset` | Hard-reset the VM |
-| `pause` / `resume` | Freeze / unfreeze the VM |
-| `factory-reset` | Discard all guest disk changes |
-| `snapshot` | Take/restore/list/delete snapshots |
-| `screenshot` | Save the guest screen to PNG/PPM |
-| `click` / `move` / `drag` | Inject mouse input |
-| `key` / `type` | Inject keyboard input |
-| `shell` | Run a guest shell command, print output |
-| `hmp` | Run a raw QEMU monitor command |
-| `serial` | Show the guest serial log |
+| Setting | Option | Values |
+|---------|--------|--------|
+| Memory | `--memory` | 2, 4, 8 or 16 (GB); maps to a QEMU machine variant |
+| Resolution | `--resolution` | `WIDTHxHEIGHT`, default `1920x1080` |
+| Shared folder | `--share DIR` | host directory, visible in the guest as `/share` |
+| Audio | `--audio on\|off` | headless VMs always run with `-audio none` |
+| Display | `--display` | `gtk`, `sdl`, `vnc`, `none` |
+| Kernel | `--kernel PATH` | `kernel8.img` to boot |
 
-### Examples
+Resolution and shared folder reach the guest through device properties on the
+command line, for example:
+
+```
+qemu-system-aarch64 -M raspi5b,graphics=on -m 4G -cpu cortex-a76 -kernel kernel8.img \
+  -dtb bcm2712-rpi-5-b.dtb -drive if=none,id=lobsterdisk,file=disk.qcow2,format=qcow2 \
+  -serial stdio -monitor unix:monitor.sock,server,nowait -display none \
+  -global lobster-sys.width=1280 -global lobster-sys.height=720 \
+  -global lobster-share.dir=/path/to/share -audio none
+```
+
+Commas in the shared folder path are doubled for QEMU. Example check of a
+shared folder: put `proof.txt` in the folder, then `lobstervm shell myvm 'ls /share'`.
+
+## Disks
+
+Each VM has a qcow2 overlay on a read-only base image (`lobsteros.img`, or the
+path in `LOBSTER_BASE_DISK`). Build the base from `base-root/` and
+`base-root.manifest`:
 
 ```bash
-# Create a VM
-lobstervm create myvm --memory 4 --resolution 1920x1080 --display gtk
-
-# Start it graphically
-lobstervm start myvm
-
-# Take a snapshot
-lobstervm snapshot myvm take "clean-boot"
-
-# Restore later
-lobstervm snapshot myvm restore "clean-boot"
-
-# Open the GUI manager
-lobstervm gui
+python3 tools/mkbase.py --output lobsteros.img
+python3 tools/mkbase.py --output lobsteros.img --check   # compare with a fresh build
 ```
-
----
-
-## 🖱 Graphical Manager (`lobstervm gui`)
-
-The **tkinter-based GUI** (roadmap E2.3) provides:
-
-- **VM List** (left): name, state (running/stopped/paused), memory, resolution; refresh button + 3s auto-refresh
-- **Details Pane** (right): disk path, memory, resolution, display, audio, shared folder, kernel, description, status, uptime
-- **Actions**: Start, Stop, Pause/Resume, Reset, Screenshot, Settings, Snapshots
-- **New VM Dialog**: name, memory GB, resolution, disk size — validates via `config.py`
-- **Settings Dialog**: modify any VM field — reuses CLI's modify path
-- **Snapshot Tree**: list/create/restore/delete via `Machine.snapshot_*`
-- **Live Serial Console**: tails the VM's `serial.log`, auto-refreshing
-- **Screenshot**: calls `Machine.screenshot()`, displays PNG in popup
-- **Thread-safe**: long operations run in background threads, UI never freezes
-- **Robust**: errors show dialogs/status messages, never crash the app
-
-### Screenshot
-![GUI Manager](assets/gui-screenshot.png)  <!-- placeholder -->
-
----
-
-## 🧪 Testing
 
 ```bash
-# Run unit tests (headless, no display needed)
-./tools/check.sh
-
-# Or directly:
-python3 -m unittest discover -s tests -v
-
-# Live GUI regression suite (boots a throwaway VM; needs QEMU fork, kernel, base image)
-python3 tools/gui_test_vm.py [--test NAME] [--junit PATH] [--output-dir DIR]
+lobstervm disk info myvm
+lobstervm disk export myvm out.img            # standalone flattened copy (VM stopped)
+lobstervm disk import myvm out.img --yes      # replace the disk; data and snapshots are lost
+lobstervm disk resize myvm 128M --yes         # grow the ext2 volume (VM stopped, snapshots lost)
+lobstervm factory-reset myvm                  # discard all guest disk changes
 ```
 
-`tools/gui_test.py` is a thin forwarder to `gui_test_vm.py`. The suite checks
-the clean-boot desktop (no app windows, one-time Welcome), launches apps with
-the guest `app <name>` command and saves screenshots to `--output-dir`.
+`resize` has a known failure after a VM has been booted; see STATUS.md.
 
-Tests cover:
-- `format_vm_row()` — VM list formatting
-- `serial_tail()` — log tailing logic
-- `validate_new_vm_params()` — new-VM dialog validation (delegates to `config.py`)
-- `VmConfig` validation — all error paths
-- `VmStore` — create/list/load/delete/snapshots
+## Snapshots
 
----
+Snapshots live inside the VM's qcow2 disk.
 
-## 🏗 Architecture
-
-```
-lobstervm/
-├── __init__.py
-├── cli.py          # argparse front end
-├── config.py       # VmConfig, VmStore, validation, qcow2 layering
-├── machine.py      # Machine: start/stop/pause/resume/reset, HMP, serial, snapshots, screenshots
-├── paths.py        # Path resolution (no hard-coded paths)
-└── gui.py          # tkinter graphical manager (E2.3)
+```bash
+lobstervm snapshot myvm take clean
+lobstervm snapshot myvm list
+lobstervm snapshot myvm restore clean
+lobstervm snapshot myvm delete clean
+lobstervm start myvm --headless --resume clean   # do not add --wait: see STATUS.md
 ```
 
-**Disk layering**: Each VM gets a qcow2 overlay on the pristine base image (`lobsteros.img`). The base is never written; all guest writes and snapshots land in the per-VM overlay. Build the base once with `python3 tools/mkbase.py` (it is not tracked; `--check` proves it matches `base-root/`).
+## Tests
 
-**Disk tools**: `lobstervm disk info|export|import|resize <vm> ...` (stopped VM for all but `info`). `resize` grows the ext2 volume in place (max 1G: the guest driver handles 128 block groups) and discards snapshots.
-
-**Snapshots**: Stored inside the VM's qcow2 disk (`qemu-img snapshot`). Supports multiple named tags.
-
----
-
-## 📁 Repository Layout
-
-```
-├── lobstervm/              # Python package (the manager)
-│   ├── cli.py
-│   ├── config.py
-│   ├── machine.py
-│   ├── paths.py
-│   └── gui.py
-├── tests/                  # Unit tests (stdlib unittest)
-│   └── test_gui_helpers.py
-├── tools/
-│   ├── check.sh            # Test runner
-│   ├── gui_test_vm.py      # Live GUI regression suite (lobstervm Machine API)
-│   ├── gui_test.py         # Forwards to gui_test_vm.py
-│   └── mkbase.py           # Builds lobsteros.img from base-root/
-├── lobstervm.sh            # Entry point (./lobstervm.sh <command>)
-├── install.sh              # Desktop integration installer
-├── uninstall.sh            # Desktop integration uninstaller
-├── lobstervm-gui.desktop   # .desktop launcher
-├── assets/
-│   └── lobsteros-shell-icon.png
-├── kernel8.img             # LobsterOS kernel (build artifact)
-├── base-root/              # File tree of the base disk (tracked)
-├── base-root.manifest      # Modes/owners for base-root/
-├── lobsteros.img           # Base disk image, built by tools/mkbase.py (not tracked)
-├── bcm2712-rpi-5-b.dtb     # Pi 5 device tree
-├── Image-pi5               # Raspberry Pi OS kernel (for Linux boot testing)
-├── initramfs8              # Raspberry Pi OS initramfs
-├── README.md               # This file
-├── STATUS.md               # Implementation status
-└── release_notes.md        # Changelog
+```bash
+bash tools/check.sh                              # unit tests, syntax and CLI smoke checks
+python3 -m unittest discover -s tests            # unit tests only (needs LOBSTER_BASE_DISK)
+python3 tools/gui_test_vm.py --kernel kernel8.img   # live GUI harness
 ```
 
----
+`tools/gui_test_vm.py` boots a throwaway VM and drives it through the QEMU
+monitor and the serial console, asserting on screenshot pixels and serial
+output. It covers: EL0 app window, start menu (open, close by click, Esc as an
+expected failure), panel clock, app launching, background app, MicroPython,
+`pkg install`, runtime resolution change, calculator keyboard input with
+`5 % 0` (display must read `Error`, no panic), Ctrl+C, and the one-time Welcome
+window across two boots. It prints `[XFAIL]` for the Esc check on kernels where
+Esc does not close the menu and `[XPASS]` when that starts working. Unit tests
+need `LOBSTER_BASE_DISK` pointing at a built base image.
 
-## 🔧 Configuration
+## Building the QEMU binary
 
-Environment variables (all optional):
+The binary is looked up at `../qemu-src/build-opt/qemu-system-aarch64`, or set
+`LOBSTER_QEMU`. The existing `build-opt` tree was configured with:
+
+```bash
+git clone -b lobster/main https://github.com/jlaportebot/lobster-qemu.git qemu-src
+mkdir -p qemu-src/build-opt && cd qemu-src/build-opt
+../configure --target-list=aarch64-softmmu --enable-lto -Doptimization=3 -Db_ndebug=true
+ninja
+```
+
+(Flags are copied from that tree's `config.status`; the clone-and-build
+sequence itself was not re-run when this file was written.)
+
+## Environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `LOBSTER_QEMU` | Path to `qemu-system-aarch64` with `raspi5b` machine |
-| `LOBSTER_KERNEL` | Override default `kernel8.img` |
-| `LOBSTER_DTB` | Override default DTB |
-| `LOBSTER_BASE_DISK` | Override base disk image |
-| `LOBSTERVM_HOME` | VM store directory (default: `~/.local/share/lobstervm`) |
-| `LOBSTERVM_RUNTIME` | Runtime dir for sockets/pids (default: `$XDG_RUNTIME_DIR/lobstervm`) |
+| `LOBSTER_QEMU` | Path to `qemu-system-aarch64` with the `raspi5b` machine |
+| `LOBSTER_KERNEL` | Kernel to boot instead of the bundled one |
+| `LOBSTER_DTB` | Device tree override |
+| `LOBSTER_BASE_DISK` | Base disk image override |
+| `LOBSTERVM_HOME` | VM store (default `~/.local/share/lobstervm`) |
+| `LOBSTERVM_RUNTIME` | Sockets and pid files (default `$XDG_RUNTIME_DIR/lobstervm`) |
 
----
+## Layout
 
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Write tests first (TDD)
-4. Implement, verify `./tools/check.sh` passes
-5. Submit PR with description of changes
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **QEMU Project** — upstream emulation framework
-- **Raspberry Pi Documentation** — BCM2712, RP1 datasheets
-- **LobsterOS** — the bare-metal Rust OS that makes this emulator useful
-
----
-
-**LobsterVM** — Built with 🦞 by the LobsterOS team
+```
+lobstervm/        manager package: cli.py, config.py, machine.py, disk.py, paths.py, gui.py
+tests/            unittest suite
+tools/            check.sh, gui_test_vm.py, mkbase.py, serial_shell.py, ...
+base-root/        file tree of the base disk, with base-root.manifest for modes/owners
+lobstervm.sh      entry point
+install.sh        desktop integration (uninstall.sh reverses it)
+STATUS.md         verified state and known issues
+```
