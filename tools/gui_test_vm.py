@@ -823,7 +823,7 @@ def main():
     ap = argparse.ArgumentParser(description="LobsterOS GUI test harness on lobstervm")
     ap.add_argument("--kernel", default=DEFAULT_KERNEL,
                     help="kernel8.img to boot (default: bundled)")
-    ap.add_argument("--display", choices=["none", "gtk", "sdl", "vnc"], default="none",
+    ap.add_argument("--display", choices=["none", "auto", "gtk", "sdl", "cocoa", "vnc"], default="none",
                     help="QEMU display backend (default: none)")
     ap.add_argument("--test", default="all",
                     choices=["all"] + list(TESTS),

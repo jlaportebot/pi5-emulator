@@ -1,5 +1,7 @@
 """Persistent VM definitions (the equivalent of a VirtualBox .vbox file)."""
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -12,9 +14,13 @@ VM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 RESOLUTION_PATTERN = re.compile(r"^(\d{3,4})x(\d{3,4})$")
 #: RAM size in GiB → QEMU machine type (each is a real Pi 5 board variant).
 MACHINE_BY_MEMORY_GB = {2: "raspi5b-2g", 4: "raspi5b", 8: "raspi5b-8g", 16: "raspi5b-16g"}
-DISPLAY_BACKENDS = ("gtk", "sdl", "vnc", "none")
+DISPLAY_BACKENDS = ("auto", "gtk", "sdl", "cocoa", "vnc", "none")
+DEFAULT_DISPLAY = "auto"
 CONFIG_FILE = "vm.json"
 DISK_FILE = "disk.qcow2"
+BASE_DIR = "base"
+BASE_HASH_CHARS = 16
+HASH_CHUNK_BYTES = 1 << 20
 
 
 class VmError(RuntimeError):
@@ -26,7 +32,7 @@ class VmConfig:
     name: str
     memory_gb: int = 4
     resolution: str = "1920x1080"
-    display: str = "gtk"
+    display: str = DEFAULT_DISPLAY
     audio: bool = True
     shared_folder: str = ""
     kernel: str = ""
@@ -36,6 +42,8 @@ class VmConfig:
     def validate(self):
         if not VM_NAME_PATTERN.match(self.name):
             raise VmError(f"invalid VM name {self.name!r} (letters, digits, _ . -)")
+        if self.name == BASE_DIR:
+            raise VmError(f"{BASE_DIR!r} is reserved for the managed base image")
         if self.memory_gb not in MACHINE_BY_MEMORY_GB:
             raise VmError(f"memory must be one of {sorted(MACHINE_BY_MEMORY_GB)} GB")
         if not RESOLUTION_PATTERN.match(self.resolution):
@@ -94,7 +102,11 @@ class VmStore:
         if self.exists(config.name):
             raise VmError(f"VM already exists: {config.name}")
         self.save(config)
-        self.reset_disk(config.name)
+        try:
+            self.reset_disk(config.name)
+        except (VmError, paths.MissingComponent):
+            shutil.rmtree(self.vm_dir(config.name), ignore_errors=True)
+            raise
         return config
 
     def delete(self, name):
@@ -111,8 +123,26 @@ class VmStore:
         disk = self.disk_path(name)
         if disk.exists():
             disk.unlink()
-        run_qemu_img(["create", "-f", "qcow2", "-b", str(paths.base_disk()),
+        run_qemu_img(["create", "-f", "qcow2", "-b", str(self.backing_image()),
                       "-F", "raw", str(disk)])
+
+    def backing_image(self):
+        """The base image overlays are layered on.
+
+        An image from the installed bundle is read-only and moves on update,
+        so it is copied once into ``<root>/base/lobsteros-<sha256>.img``.
+        """
+        source = paths.base_disk()
+        if not paths.is_bundled(source):
+            return source
+        target_dir = self.root / BASE_DIR
+        target = target_dir / f"lobsteros-{_file_digest(source)}.img"
+        if not target.is_file():
+            target_dir.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + ".part")
+            shutil.copyfile(source, partial)
+            os.replace(partial, target)
+        return target
 
     def snapshots(self, name):
         """Snapshot tags stored in the VM's disk (VM must be stopped)."""
@@ -128,11 +158,20 @@ class VmStore:
         run_qemu_img(["snapshot", "-d", tag, str(self.disk_path(name))])
 
 
+def _file_digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(HASH_CHUNK_BYTES), b""):
+            digest.update(chunk)
+    return digest.hexdigest()[:BASE_HASH_CHARS]
+
+
 def run_qemu_img(args):
-    tool = shutil.which("qemu-img")
-    if tool is None:
-        raise VmError("qemu-img is not installed (apt install qemu-utils)")
-    result = subprocess.run([tool, *args], capture_output=True, text=True)
+    try:
+        tool = paths.qemu_img_binary()
+    except paths.MissingComponent as error:
+        raise VmError(str(error)) from error
+    result = subprocess.run([str(tool), *args], capture_output=True, text=True)
     if result.returncode != 0:
         raise VmError(f"qemu-img {args[0]} failed: {result.stderr.strip()}")
     return result.stdout

@@ -18,12 +18,25 @@ os.environ["DISPLAY"] = ""
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from image_stubs import ImageStubs
+
 from lobstervm.config import VmConfig, VmStore, VmError, MACHINE_BY_MEMORY_GB
 from lobstervm.gui import (
     format_vm_row,
     serial_tail,
     validate_new_vm_params,
 )
+
+
+STUBS = ImageStubs()
+
+
+def setUpModule():
+    STUBS.start()
+
+
+def tearDownModule():
+    STUBS.stop()
 
 
 class TestFormatVmRow(unittest.TestCase):

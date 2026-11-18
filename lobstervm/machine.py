@@ -2,8 +2,9 @@
 
 A running VM is a detached QEMU process plus a runtime directory:
 
-    monitor.sock   HMP monitor (unix socket)
-    serial.in      FIFO feeding the guest's serial console
+    monitor.sock   HMP monitor (unix socket, or monitor.port with its TCP port)
+    serial.sock    guest serial console (or serial.port); QEMU also appends
+                   everything the guest prints to serial.log
     serial.log     everything the guest printed on serial
     qemu.log       QEMU's own stderr
     qemu.pid       QEMU's pid
@@ -13,14 +14,15 @@ to a VM that another process started.
 """
 import os
 import re
-import signal
 import socket
 import subprocess
 import time
 from pathlib import Path
 
-from . import paths
+from . import paths, procctl
+from .channel import Channel, Endpoint
 from .config import VmError, VmStore
+from .display import display_argument, resolve_display
 
 HMP_PROMPT = b"(qemu) "
 HMP_TIMEOUT_S = 30.0
@@ -34,8 +36,10 @@ BOOT_TIMEOUT_S = 90.0
 STOP_TIMEOUT_S = 20.0
 POLL_INTERVAL_S = 0.2
 MOUSE_LEFT = 1
-GTK_OPTIONS = "gtk,show-tabs=off,show-cursor=off,grab-on-hover=on"
-VNC_DISPLAY = "vnc=127.0.0.1:9"
+MONITOR_CHANNEL = "monitor"
+SERIAL_CHANNEL = "serial"
+MONITOR_START_TIMEOUT_S = 20.0
+POWEROFF_GRACE_S = 5.0
 LEGACY_DEVICE_ENV = ("LBST_RES", "LBST_SHARE", "LBST_DISKIMG")
 
 
@@ -47,8 +51,11 @@ class Machine:
         self.name = name
         self.config = self.store.load(name)
         self.runtime_dir = paths.runtime_home() / name
-        self.monitor_path = self.runtime_dir / "monitor.sock"
-        self.serial_in_path = self.runtime_dir / "serial.in"
+        self.monitor = Channel(self.runtime_dir, MONITOR_CHANNEL)
+        self.serial = Channel(self.runtime_dir, SERIAL_CHANNEL)
+        self.monitor_path = self.monitor.socket_path
+        self.monitor_endpoint = Endpoint(path=str(self.monitor.socket_path))
+        self.serial_endpoint = Endpoint(path=str(self.serial.socket_path))
         self.serial_log_path = self.runtime_dir / "serial.log"
         self.qemu_log_path = self.runtime_dir / "qemu.log"
         self.pid_path = self.runtime_dir / "qemu.pid"
@@ -61,13 +68,7 @@ class Machine:
             pid = int(self.pid_path.read_text().strip())
         except (FileNotFoundError, ValueError):
             return None
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return None
-        except PermissionError:
-            return pid
-        return pid if _is_qemu(pid) else None
+        return pid if procctl.is_qemu_process(pid) else None
 
     def is_running(self):
         return self.pid() is not None
@@ -79,14 +80,13 @@ class Machine:
         self._prepare_runtime_dir()
         if not self.store.disk_path(self.name).exists():
             self.store.reset_disk(self.name)
-        command = self._qemu_command(display or self.config.display, resume)
-        serial_in = os.open(self.serial_in_path, os.O_RDWR)
-        with open(self.serial_log_path, "wb") as serial_log, \
-                open(self.qemu_log_path, "wb") as qemu_log:
+        display = resolve_display(display or self.config.display, paths.qemu_binary())
+        command = self._qemu_command(display, resume)
+        with open(self.qemu_log_path, "wb") as qemu_log:
             process = subprocess.Popen(
-                command, env=self._qemu_env(), stdin=serial_in,
-                stdout=serial_log, stderr=qemu_log, start_new_session=True)
-        os.close(serial_in)
+                command, env=self._qemu_env(), stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=qemu_log,
+                **procctl.detach_options(headless=display == "none"))
         self.pid_path.write_text(f"{process.pid}\n")
         self._wait_for_monitor(process)
         return process.pid
@@ -114,9 +114,9 @@ class Machine:
             self.hmp("quit", expect_reply=False)
         except (VmError, OSError):
             pass
-        if not self._wait_exit(5.0):
-            os.kill(pid, signal.SIGKILL)
-            self._wait_exit(5.0)
+        if not self._wait_exit(POWEROFF_GRACE_S):
+            procctl.force_kill(pid)
+            self._wait_exit(POWEROFF_GRACE_S)
         self.pid_path.unlink(missing_ok=True)
 
     def reset(self):
@@ -140,9 +140,8 @@ class Machine:
         """Run one HMP monitor command and return its text output."""
         if not self.is_running():
             raise VmError(f"VM {self.name} is not running")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        with self.monitor.locate().connect() as sock:
             sock.settimeout(HMP_TIMEOUT_S)
-            sock.connect(str(self.monitor_path))
             _read_until_prompt(sock)
             sock.sendall(line.encode() + b"\n")
             if not expect_reply:
@@ -226,11 +225,8 @@ class Machine:
         """Send raw text to the guest's serial console."""
         if not self.is_running():
             raise VmError(f"VM {self.name} is not running")
-        fd = os.open(self.serial_in_path, os.O_WRONLY | os.O_NONBLOCK)
-        try:
-            os.write(fd, text.encode())
-        finally:
-            os.close(fd)
+        with self.serial.locate().connect() as sock:
+            sock.sendall(text.encode())
 
     def shell(self, command, timeout=60.0):
         """Run a guest shell command over serial; return what it printed.
@@ -285,9 +281,10 @@ class Machine:
 
     def _prepare_runtime_dir(self):
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
-        for stale in (self.monitor_path, self.serial_in_path, self.pid_path):
-            stale.unlink(missing_ok=True)
-        os.mkfifo(self.serial_in_path, 0o600)
+        self.pid_path.unlink(missing_ok=True)
+        self.serial_log_path.write_bytes(b"")
+        self.monitor_endpoint = self.monitor.allocate()
+        self.serial_endpoint = self.serial.allocate()
 
     def _qemu_command(self, display, resume):
         config = self.config
@@ -300,9 +297,8 @@ class Machine:
             "-kernel", str(config.kernel_path),
             "-dtb", str(paths.default_dtb()),
             "-drive", f"if=none,id=lobsterdisk,file={disk},format=qcow2",
-            "-serial", "stdio",
-            "-monitor", f"unix:{self.monitor_path},server,nowait",
-            "-display", _display_argument(display),
+            *self._channel_arguments(),
+            "-display", display_argument(display),
         ]
         command += _device_arguments(config)
         if not config.audio or display == "none":
@@ -311,6 +307,16 @@ class Machine:
             command += ["-loadvm", resume]
         return command + list(config.extra_args)
 
+    def _channel_arguments(self):
+        log = _qemu_option_value(str(self.serial_log_path))
+        return [
+            "-chardev", f"socket,id=mon0,{self.monitor_endpoint.chardev_options()}",
+            "-mon", "chardev=mon0,mode=readline",
+            "-chardev", f"socket,id=ser0,{self.serial_endpoint.chardev_options()},"
+                        f"logfile={log},logappend=on",
+            "-serial", "chardev:ser0",
+        ]
+
     def _qemu_env(self):
         env = dict(os.environ)
         for stale in LEGACY_DEVICE_ENV:
@@ -318,16 +324,18 @@ class Machine:
         return env
 
     def _wait_for_monitor(self, process):
-        deadline = time.monotonic() + 20.0
+        deadline = time.monotonic() + MONITOR_START_TIMEOUT_S
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 tail = self.qemu_log_path.read_text(errors="replace")[-600:]
                 self.pid_path.unlink(missing_ok=True)
                 raise VmError(f"QEMU exited during startup:\n{tail}")
-            if self.monitor_path.exists():
+            if self.monitor.is_ready():
+                self.monitor.restrict()
+                self.serial.restrict()
                 return
             time.sleep(POLL_INTERVAL_S)
-        raise VmError("QEMU monitor socket never appeared")
+        raise VmError("QEMU monitor never became reachable")
 
     def _wait_exit(self, timeout):
         deadline = time.monotonic() + timeout
@@ -354,24 +362,6 @@ def _device_arguments(config):
         folder = _qemu_option_value(config.shared_folder)
         arguments += ["-global", f"lobster-share.dir={folder}"]
     return arguments
-
-
-def _is_qemu(pid):
-    """Guard against pid reuse: the pid must still be a QEMU process."""
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except (OSError, IndexError):
-        return False
-    return b"qemu-system" in cmdline and state != "Z"
-
-
-def _display_argument(display):
-    if display == "gtk":
-        return GTK_OPTIONS
-    if display == "vnc":
-        return VNC_DISPLAY
-    return display
 
 
 def _read_until_prompt(sock):

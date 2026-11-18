@@ -18,6 +18,8 @@ from unittest.mock import patch, Mock
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from image_stubs import ImageStubs
+
 from lobstervm.config import (
     VmConfig, VmStore, VmError,
     MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS,
@@ -33,6 +35,17 @@ from lobstervm.cli import main, build_parser
 # ════════════════════════════════════════════════════════════════════════
 # Config validation tests
 # ════════════════════════════════════════════════════════════════════════
+
+STUBS = ImageStubs()
+
+
+def setUpModule():
+    STUBS.start()
+
+
+def tearDownModule():
+    STUBS.stop()
+
 
 class TestConfigValidation(unittest.TestCase):
     """Tests for VmConfig validation."""
@@ -519,7 +532,7 @@ class TestPaths(unittest.TestCase):
 
     def test_qemu_binary_name(self):
         """QEMU binary name should be correct."""
-        self.assertEqual(paths.QEMU_BINARY_NAME, "qemu-system-aarch64")
+        self.assertEqual(paths.QEMU_BASENAME, "qemu-system-aarch64")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -590,7 +603,7 @@ class TestMachine(unittest.TestCase):
         config = VmConfig(name="testvm")
         self.store.create(config)
         machine = Machine("testvm", self.store)
-        self.assertEqual(machine.serial_in_path.name, "serial.in")
+        self.assertEqual(machine.serial.socket_path.name, "serial.sock")
         self.assertEqual(machine.serial_log_path.name, "serial.log")
 
     def test_serial_bytes_empty(self):

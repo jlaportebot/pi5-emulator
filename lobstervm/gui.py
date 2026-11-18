@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 
 from .config import VmConfig, VmStore, VmError, MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS
+from .firstrun import ensure_default_vm, missing_components_message
 from .machine import Machine
+from .paths import MissingComponent
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -565,6 +567,15 @@ class LobsterVmManager:
         except Exception as e:
             self.status_var.set(f"Refresh failed: {e}")
 
+    def select_vm(self, name: str):
+        """Select ``name`` in the list, as if the user had clicked it."""
+        for index in range(self.vm_listbox.size()):
+            if self.vm_listbox.get(index).split()[0] == name:
+                self.vm_listbox.selection_clear(0, tk.END)
+                self.vm_listbox.selection_set(index)
+                self._on_vm_select(None)
+                return
+
     def _on_vm_select(self, event):
         sel = self.vm_listbox.curselection()
         if not sel:
@@ -801,12 +812,28 @@ def main(store: Optional[VmStore] = None) -> int:
 
     root = tk.Tk()
     try:
-        LobsterVmManager(root, store)
-        root.mainloop()
-        return 0
+        return _run_window(root, store)
+    except (VmError, MissingComponent) as error:
+        messagebox.showerror("LobsterVM", str(error), parent=root)
+        return 1
     except Exception as e:
         messagebox.showerror("Fatal Error", f"GUI failed to start: {e}")
         return 1
+
+
+def _run_window(root: tk.Tk, store: Optional[VmStore]) -> int:
+    """Check components, create the default VM on first run, run the UI."""
+    problem = missing_components_message()
+    if problem:
+        messagebox.showerror("LobsterVM - missing components", problem, parent=root)
+        return 1
+    store = store or VmStore()
+    created = ensure_default_vm(store)
+    manager = LobsterVmManager(root, store)
+    if created:
+        manager.select_vm(created)
+    root.mainloop()
+    return 0
 
 
 def launch() -> int:

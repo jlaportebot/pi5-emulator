@@ -9,8 +9,21 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from image_stubs import ImageStubs
+
 from lobstervm.config import VmConfig, VmStore
 from lobstervm.machine import Machine
+
+
+STUBS = ImageStubs()
+
+
+def setUpModule():
+    STUBS.start()
+
+
+def tearDownModule():
+    STUBS.stop()
 
 
 class TestDeviceProperties(unittest.TestCase):
