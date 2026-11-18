@@ -11,6 +11,15 @@ tracked.
     python3 tools/mkbase.py --check [--output X]  # prove X matches the tree
     python3 tools/mkbase.py --extract IMAGE       # (re)create tree + manifest
 
+``base-root/bin/spin`` and ``spin_print`` are freestanding EL0 test programs
+(preemption and Ctrl+C proofs). They are built from the LobsterOS kernel repo
+(``tools/spin.c``, ``tools/spin_print.c``, ``tools/lobster_user.ld``) with
+
+    CC=aarch64-linux-gnu-gcc tools/build_test_programs.sh OUTDIR   # or CC=gcc on aarch64
+
+and copied here with mode 0775; rebuild and replace them whenever those
+sources change.
+
 The geometry mirrors the original hand-made image and satisfies the guest's
 ext2 driver (LobsterOS src/fs/ext2.rs): revision 1 with 256-byte inodes, 1 KiB
 blocks (the driver reads the group descriptor table from block 2), at most

@@ -1,6 +1,8 @@
 d 0755 0 0 /
 f 0775 0 0 /argsdemo
 d 0755 0 0 /bin
+f 0775 0 0 /bin/spin
+f 0775 0 0 /bin/spin_print
 d 0755 0 0 /etc
 f 0664 0 0 /etc/boot_open
 f 0644 0 0 /etc/hello.txt
