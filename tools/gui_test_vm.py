@@ -120,10 +120,12 @@ KEY_SC = {"h": 0x23, "e": 0x12, "l": 0x26, "5": 0x06, "0": 0x0B, "enter": 0x1C,
           "esc": 0x01, "c": 0x2E}
 CALC_STATE_PREFIX = "Calculator state: display="
 CALC_ERROR_DISPLAY = "Error"
-# Shift+5 types '%'. The guest's HID path reads the QEMU flag bits with a
-# different layout (QEMU bit1=ctrl is HID LShift), so "ctrl" is what
-# produces Shift in the guest on current kernels; plain "shift" types a '5'.
-PERCENT_MODS = "ctrl"
+# Shift+5 types '%'. Kernels with the HID modifier fix read Shift correctly;
+# older ones swap QEMU's Shift and Ctrl bits, so "ctrl" produced Shift there.
+# Try the correct chord first and fall back for older kernels.
+PERCENT_MODS_ORDER = ("shift", "ctrl")
+LEGACY_MODS = "ctrl"
+LEGACY_KERNEL_NOTE = "[note] kernel predates the HID modifier fix"
 MENU_PROBE_POINTS = ((150, 900), (300, 750))
 MENU_TOLERANCE = 20  # tighter than the open-check: the desktop behind is within 30 of the menu colour
 MENU_SETTLE_S = 0.8
@@ -445,20 +447,35 @@ def test_calc_keys(vm, tmp_path: Path) -> bool:
     vm.click(*CALC_TITLE_XY)  # focus the Calculator window
     time.sleep(0.5)
 
-    vm.key(KEY_SC["5"])
-    vm.key(KEY_SC["5"], mods=PERCENT_MODS)
-    vm.key(KEY_SC["0"])
-    vm.key(KEY_SC["enter"])
-    time.sleep(1.5)
+    display, mods = enter_percent_expression(vm)
     vm.screenshot(vm.out_dir / "calculator.png")
-
-    ensure_shell(vm)
-    display = calc_display(vm)
     shows_error = report(display == CALC_ERROR_DISPLAY,
                          f"calc 5%0: display is {CALC_ERROR_DISPLAY!r} (got {display!r})")
+    if shows_error and mods == LEGACY_MODS:
+        print(LEGACY_KERNEL_NOTE)
     # The kernel must still be alive: a panic restart would add a boot banner.
     alive = serial_count(vm, b"initialization complete") == boot_banners
     return report(alive, "calc 5%0: no kernel panic (banner count stable)") and shows_error
+
+
+def enter_percent_expression(vm):
+    """Type 5 % 0 = with the first modifier choice that yields '%'.
+
+    Returns ``(display, mods_used)``; the display is the last one read.
+    """
+    display = None
+    for mods in PERCENT_MODS_ORDER:
+        vm.key(KEY_SC["esc"])  # clear any state left by an earlier attempt
+        vm.key(KEY_SC["5"])
+        vm.key(KEY_SC["5"], mods=mods)
+        vm.key(KEY_SC["0"])
+        vm.key(KEY_SC["enter"])
+        time.sleep(1.5)
+        ensure_shell(vm)
+        display = calc_display(vm)
+        if display == CALC_ERROR_DISPLAY:
+            break
+    return display, mods
 
 
 def calc_display(vm):

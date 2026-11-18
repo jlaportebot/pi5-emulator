@@ -3,6 +3,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -65,6 +66,43 @@ class TestCountTextLines(unittest.TestCase):
     def test_box_limits_the_scan(self):
         img = self.make_image([2, 3, 4, 5, 6, 30, 31, 32, 33, 34])
         self.assertEqual(gui_test_vm.count_text_lines(img, (0, 20, 20, 40)), 1)
+
+
+class FakeCalcVm:
+    """Records key chords; the guest shows Error only for ``working_mods``."""
+
+    def __init__(self, working_mods):
+        self.working_mods = working_mods
+        self.chords = []
+
+    def key(self, scancode, mods=""):
+        self.chords.append((scancode, mods))
+
+
+class TestEnterPercentExpression(unittest.TestCase):
+    def run_with(self, working_mods):
+        vm = FakeCalcVm(working_mods)
+
+        def display(_vm):
+            return "Error" if vm.chords[-3][1] == vm.working_mods else "5550"
+
+        with patch.object(gui_test_vm, "ensure_shell"), \
+                patch.object(gui_test_vm, "calc_display", side_effect=display), \
+                patch.object(gui_test_vm.time, "sleep"):
+            return vm, gui_test_vm.enter_percent_expression(vm)
+
+    def test_shift_is_tried_first_on_fixed_kernels(self):
+        vm, (display, mods) = self.run_with("shift")
+        self.assertEqual((display, mods), ("Error", "shift"))
+        self.assertEqual(sum(1 for _, m in vm.chords if m == "ctrl"), 0)
+
+    def test_falls_back_to_ctrl_on_legacy_kernels(self):
+        _vm, (display, mods) = self.run_with("ctrl")
+        self.assertEqual((display, mods), ("Error", "ctrl"))
+
+    def test_reports_failure_when_neither_chord_works(self):
+        _vm, (display, mods) = self.run_with("alt")
+        self.assertEqual((display, mods), ("5550", "ctrl"))
 
 
 if __name__ == "__main__":
