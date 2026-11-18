@@ -1,195 +1,76 @@
-# Raspberry Pi 5 (BCM2712) QEMU Emulator - Status Report
+# Status
 
-## Summary
-**✅ FULLY FUNCTIONAL** — Complete device realization for Raspberry Pi 5 (BCM2712) in QEMU with **LobsterOS booting perfectly** and all shell features working. Custom MMIO devices (`lobster-net`, `lobster-input`) provide real host-backed networking and input.
-
----
-
-## What Works ✅
-
-### Device Realization (All Working)
-- **BCM2712 SoC**: 4× Cortex-A76 cores, GIC-400 interrupt controller
-- **Memory System**: 4GB RAM (configurable), proper memory mapping at 0x7c000000 (32-bit alias) and 0x107c000000 (SCB bus)
-- **Framebuffer**: V3D GPU framebuffer with mailbox channel alias technique (1920×1080×32)
-- **Peripherals**:
-  - OTP (One-Time Programmable memory)
-  - Property channel (mailbox) — framebuffer allocation, clocks, power
-  - SDHCI (EMMC1) - SD card controller
-  - SDHOST - legacy SD controller
-  - DMA channels (0 and 15)
-  - DWC2 USB OTG
-  - Power Management
-  - SPI (SPI0)
-  - I2C (3 controllers: BSC0, BSC1, BSC2)
-  - UART0 (PL011) with Pi 5 address relocation (0x7d001000) and legacy alias (0xFE201000)
-  - EMMC2 - Pi 5 microSD controller
-  - RP1 I/O controller (GPIO, UART, I2C, SPI, SD)
-  - V3D GPU (placeholder for mailbox channel)
-- **Interrupt Controller**:
-  - GIC-400: 4 CPU cores, 512 SPI interrupts, virtualization extensions
-  - BCM2835 IC: Legacy interrupt controller for VideoCore peripherals (64 GPU IRQs, 8 ARM IRQs)
-- **Clock Management**: CPRMAN with UART clock (3MHz from XOSC) properly connected
-- **DMA Remap**: 0xc0000000 → 0x00000000 (30-bit DMA)
-
-### Custom MMIO Devices (Unique to This Emulator)
-| Device | Address | Version | Status |
-|--------|---------|---------|--------|
-| **lobster-net** | 0x7D00_9000 | v1.2 (0x00030000) | ✅ **Full HTTP/HTTPS proxy with Bearer auth** |
-| **lobster-input** | 0x7D00_8000 | v1.0 (0x00010000) | ✅ **Keyboard + mouse FIFO** |
-
-**lobster-net capabilities**:
-- URL fetch (GET) with response up to 512 KB
-- Bearer token authentication (for GitHub API, etc.)
-- URL buffer 3840 bytes, synchronous completion
-- Used by: `wget`, `curl`, `pkg update`, `gh api`, `gh repo list`, `gh auth login`
-
-**lobster-input capabilities**:
-- Key down/up events (Linux input codes)
-- Relative mouse movement + buttons
-- Ring buffer FIFO (lock-free from guest perspective)
-- Used by: Window manager, GUI apps, GTK display
-
-### Memory Mapping
-- Peripheral region at 0x7c000000 (32-bit alias) with overlap priority 1
-- SCB bus at 0x107c000000+
-- GPU peripheral alias at 0x7e000000
-- Legacy UART0 at 0xFE201000 (via alias)
-- lobster-net at 0x7D00_9000
-- lobster-input at 0x7D00_8000
-
----
-
-## LobsterOS Integration Status ✅
-
-| Feature | Status | Verified |
-|---------|--------|----------|
-| **Bare-metal boot** | ✅ Working | EL3→EL2→EL1, MMU before GIC/Timer |
-| **Shell (100+ commands)** | ✅ Working | `help`, `version`, `uname`, `uptime`, `mem`, `ls`, `cat`, `cd`, `pwd` |
-| **Filesystem (VFS, initrd)** | ✅ Working | `/bin/hello`, `/bin/hello.c`, `/bin/python`, `/etc/*` |
-| **C Compilation (cc)** | ✅ Working | `cc hello.c -run` → AArch64 ELF via lobster-net |
-| **ELF Execution (run)** | ✅ Working | User processes, PID allocation, syscalls |
-| **Built-in Demo (run demo)** | ✅ Working | hello-EL0 test binary |
-| **MicroPython REPL** | ✅ Working | `run /bin/python` |
-| **vi Editor** | ✅ Working | Create, edit, save, compile, run |
-| **Network (wget/curl)** | ✅ Working | HTTP via lobster-net MMIO proxy |
-| **Package Manager (pkg)** | ✅ Working | `list`, `search`, `update` (arch-filtered) |
-| **GitHub CLI (gh)** | ✅ Working | `auth login/status`, `api /user`, `repo list` |
-| **User Management** | ✅ Working | `useradd`, `su`, `login`, `passwd`, `id`, `whoami` |
-| **Window Manager** | ✅ Working | Compositor, windows, panel, 4 desktops |
-| **GTK Graphical Display** | ✅ Working | Framebuffer mirror + lobster-input |
-
----
-
-## Known Issues ⚠️
-
-### 1. GIC Duplicate Property Warnings
-- **Status**: Non-fatal ERROR logs during GIC realize
-- **Details**: `duplicate property 'gic_cpu[0]'`, `gic_viface[0]` etc. on object type 'arm_gic'
-- **Impact**: **None observed** — LobsterOS interrupt delivery works correctly
-- **Likely Cause**: duplicate-name MMIO regions from repeated GIC realize in `bcm2712.c` and the raspi5b fixups (tracked as Q20 in the LobsterOS queue)
-
-### 2. Linux Kernel (Pi OS) Boot
-- **Status**: Device realization completes, but **no console output** from Linux kernel
-- **Tested With**: Raspberry Pi OS (Image-pi5 + initramfs8 + DTB)
-- **Likely Causes**: 
-  - Device tree missing/mismatched bindings for emulated hardware
-  - Bootloader/setup code issues for Linux kernel
-  - Timer interrupt delivery path differences
-- **Note**: **LobsterOS boots and runs perfectly** — this is a Linux-specific DT/GIC issue
-
-### Disabled Devices (Intentionally)
-| Device | Reason |
-|--------|--------|
-| GENET Ethernet | qdev_realize parent_bus conflict (disabled with `#if 0`) |
-| XHCI USB 3.0 | Not needed — lobster-input provides keyboard/mouse |
-| PCIe Controllers | BCM PCIe driver has compilation issues |
-| HDMI Controllers | Not needed — framebuffer via V3D mailbox |
-| Audio Controller | Not implemented |
-| V3D GPU | Placeholder only (mailbox channel for framebuffer) |
-| L2 INTCs | Unimplemented placeholders |
-
----
-
-## Files Modified/Fixed (Latest Commit: 10a1954)
-
-### Core Fixes
-1. **bcm2712.c**: Fixed memory region container handling, use standard `sysbus_mmio_map_overlap`, UART0 alias for legacy address
-2. **bcm2712_peripherals.c**: Fixed `peri_alias_mr` name conflict, removed unused child `peri_mr` init
-3. **IRQ Connections**: Wrapped all unimplemented device IRQ connections in `#if 0`
-4. **lobster-net v1.2**: Bearer auth mode (reg 0x34), increased buffers, cmd register
-5. **lobster-input**: Synced key/mouse event forwarding for GTK display
-6. **Launcher**: `lobstervm.sh start <vm> --headless` / `lobstervm.sh start <vm>` (GTK)
-7. **Demo Driver**: `lobsteros_auto_demo.py` for automated testing
-
----
-
-## Build & Test
+Facts only, as verified on 2026-11-17 on the Pi 5 host with the QEMU binary
+`build-opt/qemu-system-aarch64` and kernel build `aa9d2c8-kernel8.img`.
+Environment for every command below:
 
 ```bash
-# Build QEMU (one-time)
-cd pi5-emulator
-./configure --target-list=aarch64-softmmu --enable-debug --enable-gtk
-ninja -C build
-
-# Test with LobsterOS (headless serial)
-./lobstervm.sh start lobsteros --headless
-
-# Test with LobsterOS (graphical GTK)
-./lobstervm.sh start lobsteros
-
-# Test with Raspberry Pi OS (Linux - no console output yet)
-./build/qemu-system-aarch64 -M raspi5b -m 4G -cpu cortex-a76 -smp 4 \
-    -kernel Image-pi5 -initrd initramfs8 -dtb bcm2712-rpi-5-b.dtb \
-    -serial stdio -display none \
-    -append "console=ttyAMA0,115200 root=/dev/ram0 rw"
+export LOBSTER_BASE_DISK=<scratch>/base.img      # python3 tools/mkbase.py --output $LOBSTER_BASE_DISK --force
+export LOBSTER_KERNEL=<campaign>/kernels/aa9d2c8-kernel8.img
+export LOBSTERVM_HOME=<scratch>/vmhome LOBSTERVM_RUNTIME=<scratch>/vmrun
 ```
 
-### Automated Demo
-```bash
-# Run scripted demo (used for acceptance video)
-python3 lobsteros_auto_demo.py
-```
+## Works, and how it was verified
 
----
+| Capability | Command | Result |
+|------------|---------|--------|
+| Environment check | `./lobstervm.sh doctor` | kernel, device tree, base disk reported `ok` |
+| Base disk build | `python3 tools/mkbase.py --output $LOBSTER_BASE_DISK --force` | 67108864 bytes, fsck clean |
+| Base disk reproducible | `python3 tools/mkbase.py --output $LOBSTER_BASE_DISK --check` | `OK: built image matches ...` |
+| Create, boot, wait | `./lobstervm.sh create demo`; `./lobstervm.sh start demo --headless --wait` | `Desktop ready (guest boot ~1000-1400 ms)` |
+| Guest shell | `./lobstervm.sh shell demo uname` | prints kernel, architecture and CPU lines |
+| Screenshot | `./lobstervm.sh screenshot demo shot.png` | PNG written |
+| Resolution | `./lobstervm.sh create fu1 --resolution 1280x720 ...` then `screenshot` | PNG header reads 1280 x 720 (default is 1920x1080) |
+| Shared folder | `create fu1 --share DIR` with `proof.txt` in DIR; `shell fu1 'ls /share'`, `shell fu1 'cat /share/proof.txt'` | prints `proof.txt` and `hello-share` |
+| Device properties | `ps` on the running VM | command line contains `-global lobster-sys.width=1280 -global lobster-sys.height=720 -global lobster-share.dir=...` and no `LBST_*` env is passed |
+| Snapshots | `snapshot demo take clean`, `list`, `restore clean`, `delete clean` | each exits 0 and prints the tag |
+| Resume snapshot | `start demo --headless --resume clean`, then `shell demo version` | guest answers |
+| Disk info/export/import | `disk info demo`, `disk export demo out.img`, `disk import demo out.img --yes` | exit 0 |
+| Disk resize, never-booted VM | `disk resize rs 128M --yes` | `Disk of rs resized to 128.0 MiB` |
+| Factory reset | `factory-reset demo` | `Disk of demo reset to the pristine system image` |
+| Install/uninstall | `HOME=<scratch>/fakehome bash install.sh`, then `lobstervm list`, then `bash uninstall.sh` | links, desktop entry and icon created and removed |
 
-## Next Steps (Priority Order)
+## Tests
 
-1. **Fix GIC Duplicate Properties** — Investigate `arm_gic` CPU interface creation in `bcm2712.c`
-2. **Enable Linux Kernel Boot** — Debug device tree bindings, GIC interrupt delivery for Linux
-3. **Enable GENET Ethernet** — Fix `qdev_realize` parent_bus conflict (would give native Ethernet)
-4. **Enable XHCI/PCIe** — Fix BCM PCIe driver compilation
-5. **Implement Device Tree Bindings** — Match Linux DT expectations for all devices
-6. **Test Raspberry Pi OS Full Boot** — With graphical output via V3D/framebuffer
-7. **V3D GPU Acceleration** — Basic 2D/3D via mailbox shader submission
+- Unit tests: `python3 -m unittest discover -s tests` -> `Ran 174 tests`, `OK`
+  (test_disk 37, test_gui_harness_helpers 10, test_gui_helpers 30, test_lobstervm 74,
+  test_machine_command 6, test_mkbase 17; counts of `def test_` methods).
+- Lint: `ruff check lobstervm/ tools/ tests/` (ruff 0.15.15) -> `All checks passed!`
+- `bash tools/check.sh` -> exit 0.
+- GUI harness: `python3 tools/gui_test_vm.py --kernel $LOBSTER_KERNEL` -> `12/12 tests passed` on aa9d2c8 and on wave2-b4dd4a1 (two runs each),
+  run twice in a row with identical results. Tests: el0_app, start_menu,
+  start_menu_esc, clock, apps, bg_app, python, pkg_install, resolution, calc_keys,
+  ctrl_c, welcome_once. `start_menu_esc` reports `[XFAIL]` (see known issues) and
+  counts as passed.
 
----
+## Known issues
 
-## Repository
+1. Esc does not close the start menu. The harness prints `[XFAIL]`; it prints
+   `[XPASS]` when a kernel fixes this. The start menu test closes it with a second
+   click on the start button instead.
+2. The Welcome window is not painted on first boot (reported against this kernel build;
+   the harness checks the serial log marker and `wins` output, not the pixels, and passes).
+3. `dmesg` prints nothing: `./lobstervm.sh shell dm dmesg` returned an empty line.
+4. Shift via the QEMU monitor is read as Ctrl by the guest: `lkey 0x06 shift` types
+   `5`, while `lkey 0x06 ctrl` types `%`. QEMU's input flags (bit0 shift, bit1 ctrl)
+   do not match the bit layout the kernel's `hid::shift_held` tests (bit1 = left shift).
+   The harness sends `ctrl` for `%` and will fail when the kernel is fixed; switch
+   `PERCENT_MODS` in `tools/gui_test_vm.py` to `shift` then. The calculator's `%` is modulo:
+   `5 % 0 =` shows `Error`.
+5. `disk resize` on a VM that has been booted fails with `Filesystem still has errors`
+   from `e2fsck` (exit 1), even after a clean `stop`; it works on a never-booted VM.
+6. `start --headless --resume TAG --wait` times out after 90 s waiting for the
+   `desktop-ready` marker, which a restored snapshot does not print again. Start
+   without `--wait`.
+7. `lobstervm gui` was not run: this host session has no display (`tkinter` imports).
+8. Shell command separators are not supported in the guest shell: `ls /share; cat x`
+   is parsed as one command. Run each command separately.
+9. The Linux (Raspberry Pi OS) kernel does not produce console output on this machine
+   model; LobsterOS is the supported guest. (Carried over from earlier status; not re-run.)
 
-- **GitHub**: https://github.com/jlaportebot/pi5-emulator
-- **Main QEMU tree**: This repo contains only Pi 5 patches; full QEMU built from upstream + these patches
-- **LobsterOS (guest OS)**: https://github.com/jlaportebot/lobster-os
-- **Acceptance Demo Video**: `acceptance_demo.mp4` (in this repo root)
+## Not verified in this pass
 
----
-
-## Verification Checklist (All ✅)
-
-- [x] QEMU builds without errors
-- [x] `raspi5b` machine type registers
-- [x] All devices realize without crashes
-- [x] LobsterOS boots to shell banner
-- [x] Shell accepts input, executes commands
-- [x] `help` shows 100+ commands
-- [x] `cc hello.c -run` compiles C → ELF → executes
-- [x] `run demo` executes built-in EL0 binary
-- [x] `run /bin/python` starts MicroPython REPL
-- [x] `vi` editor creates/edits/saves files
-- [x] `wget` / `curl` fetch via lobster-net
-- [x] `pkg update` fetches index from GitHub releases
-- [x] `gh auth login` saves token to `/etc/github_token`
-- [x] `gh api /user` returns authenticated user JSON
-- [x] `gh repo list` returns repository list
-- [x] GTK display shows framebuffer + serial mirror
-- [x] Mouse/keyboard work in GTK window
-- [x] Acceptance video recorded and verified
+- Building the QEMU binary from source (configure flags are copied from the existing
+  build tree's `config.status`).
+- GTK, SDL and VNC displays; audio on.
+- The graphical manager.
