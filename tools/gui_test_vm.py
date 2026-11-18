@@ -78,7 +78,9 @@ KEY_SETTLE_S = 0.25
 
 # Fixed screen geometry and colours of the 1920x1080 desktop.
 LAUNCHER_XY = (25, 1060)
-PANEL_RGB = (13, 27, 42)
+PANEL_RGB = (17, 30, 45)
+# The taskbar is translucent over the wallpaper, so its pixels vary slightly.
+PANEL_TOLERANCE = 12
 MENU_RGB = (26, 38, 52)
 WINDOW_RGB = (30, 30, 46)
 EL0_IGNORED_RGB = [(30, 30, 46), (0, 0, 0), (56, 63, 79)]
@@ -522,6 +524,11 @@ def wait_hello_exit(vm, spawn_offset: int) -> None:
         print(f"[harness] hello app did not report exit: {error}")
 
 
+def rgb_near(got, want, tol: int) -> bool:
+    """True when every channel of ``got`` is within ``tol`` of ``want``."""
+    return all(abs(got[i] - want[i]) <= tol for i in range(3))
+
+
 def resize_to_target(vm, tmp_path: Path):
     """Poll screendumps until the fb is resized and the panel repainted.
 
@@ -532,7 +539,7 @@ def resize_to_target(vm, tmp_path: Path):
     deadline = time.monotonic() + RESIZE_SETTLE_TIMEOUT_S
     img = load_image(vm, tmp_path / "lb-res.ppm")
     while time.monotonic() < deadline:
-        panel_ok = img.getpixel(RESIZED_PANEL_XY) == PANEL_RGB if img.size == RESIZED_SIZE else False
+        panel_ok = rgb_near(img.getpixel(RESIZED_PANEL_XY), PANEL_RGB, PANEL_TOLERANCE) if img.size == RESIZED_SIZE else False
         if panel_ok:
             break
         time.sleep(0.5)
@@ -551,7 +558,7 @@ def test_resolution(vm, tmp_path: Path) -> bool:
         print(f"[retry] fb still {img.size} (attempt {attempt + 1})")
     ok_size = report(img.size == RESIZED_SIZE,
                      f"framebuffer resized to {img.size} (want 1280x720)")
-    panel_ok = report(img.getpixel(RESIZED_PANEL_XY) == PANEL_RGB,
+    panel_ok = report(rgb_near(img.getpixel(RESIZED_PANEL_XY), PANEL_RGB, PANEL_TOLERANCE),
                       "panel re-anchored at new bottom")
     return ok_size and panel_ok
 
