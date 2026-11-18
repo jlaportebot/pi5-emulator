@@ -4,3 +4,5 @@ kernel8.img
 __pycache__/
 lobsteros.img
 lobsteros-overlay.qcow2
+tools/gui_test_out/
+tools/gui_test_results.xml

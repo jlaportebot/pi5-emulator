@@ -120,7 +120,14 @@ The **tkinter-based GUI** (roadmap E2.3) provides:
 
 # Or directly:
 python3 -m unittest discover -s tests -v
+
+# Live GUI regression suite (boots a throwaway VM; needs QEMU fork, kernel, base image)
+python3 tools/gui_test_vm.py [--test NAME] [--junit PATH] [--output-dir DIR]
 ```
+
+`tools/gui_test.py` is a thin forwarder to `gui_test_vm.py`. The suite checks
+the clean-boot desktop (no app windows, one-time Welcome), launches apps with
+the guest `app <name>` command and saves screenshots to `--output-dir`.
 
 Tests cover:
 - `format_vm_row()` — VM list formatting
@@ -164,6 +171,8 @@ lobstervm/
 │   └── test_gui_helpers.py
 ├── tools/
 │   ├── check.sh            # Test runner
+│   ├── gui_test_vm.py      # Live GUI regression suite (lobstervm Machine API)
+│   ├── gui_test.py         # Forwards to gui_test_vm.py
 │   └── mkbase.py           # Builds lobsteros.img from base-root/
 ├── lobstervm.sh            # Entry point (./lobstervm.sh <command>)
 ├── install.sh              # Desktop integration installer

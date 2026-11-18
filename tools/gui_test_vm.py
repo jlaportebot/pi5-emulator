@@ -6,15 +6,19 @@ Boots a throwaway VM with a qcow2 overlay on the pristine base image,
 drives the desktop via HMP, captures screendumps, and asserts pixel
 conditions with PIL. Produces a JUnit-style XML summary.
 
-Interaction semantics follow the legacy tools/gui_test.py step for step:
-commands that return to the shell prompt go through Machine.shell();
+This is the one GUI harness (tools/gui_test.py only forwards here).
+Commands that return to the shell prompt go through Machine.shell();
 foreground GUI apps and REPL input are TYPED without waiting
 (Machine.send_line) and the expected evidence is polled for afterwards.
 
+The desktop boots clean: no app windows, only a one-time Welcome window.
+Apps are launched with the guest `app <name>` command.
+
 Usage:
-  python3 gui_test_vm.py [--test name] [--junit path] [--verbose]
+  python3 gui_test_vm.py [--test name] [--junit path] [--output-dir dir]
 """
 import argparse
+import re
 import shutil
 import sys
 import tempfile
@@ -86,6 +90,27 @@ EL0_CLICK_XY = (200, 715)
 RESIZED_SIZE = (1280, 720)
 RESIZED_PANEL_XY = (640, 700)
 RESIZE_SETTLE_TIMEOUT_S = 20.0
+
+# Clean-boot desktop (1920x1080). Every XY is a screen pixel.
+WELCOME_TITLE = "Welcome to LobsterOS"
+WELCOME_FIRST_BOOT_MARKER = b"[welcome] First boot detected"
+WELCOME_SKIPPED_MARKER = b"[welcome] Welcome already seen, skipping"
+WELCOME_CLOSE_XY = (1197, 377)    # red close button of the centred Welcome window
+WELCOME_CLOSE_POLLS = 10
+WINS_TIMEOUT_S = 30.0
+FILES_BODY_XY = (550, 300)        # white file list of the File Manager
+FILES_BODY_RGB = (246, 248, 250)
+CALC_TITLE_XY = (260, 154)        # Calculator title bar (focus target)
+TERMINAL_TITLE_XY = (400, 94)     # Terminal title bar (focus target)
+TERMINAL_BODY = (104, 816, 128, 576)  # x0, x1, y0, y1 of the Terminal text area
+TEXT_RGB_SUM_MIN = 450            # brightness sum separating glyphs from background
+TERMINAL_BANNER_MAX_LINES = 4     # welcome banner is 3 text lines; a log leak is far more
+APP_LAUNCHED_MARKER = "app: launched"
+WINDOW_TITLE_RE = re.compile(rb"\[wm\] Created window id=\d+ '([^']*)'")
+FILES_TITLE = "File Manager"
+CALC_TITLE = "Calculator"
+TERMINAL_TITLE = "Terminal"
+APP_LAUNCH_TIMEOUT_S = 30.0
 KEY_SC = {"h": 0x23, "e": 0x12, "l": 0x26, "5": 0x06, "0": 0x0B, "enter": 0x1C,
           "esc": 0x01, "pct": 0x08, "c": 0x2E}
 
@@ -126,6 +151,28 @@ def ensure_shell(vm, timeout: float = SHELL_READY_TIMEOUT_S) -> None:
             vm.type_serial(CTRL_C)
             nudged = True
     raise VmError(f"guest shell did not answer 'uptime' within {timeout:.0f}s")
+
+
+def parse_window_titles(serial: bytes) -> list:
+    """Titles of the windows the window manager logged on serial, in order."""
+    return [t.decode("utf-8", "replace") for t in WINDOW_TITLE_RE.findall(serial)]
+
+
+def app_window_titles(titles: list) -> list:
+    """Titles that are real applications (the first-run Welcome is not one)."""
+    return [t for t in titles if t != WELCOME_TITLE]
+
+
+def count_text_lines(img, box, threshold: int = TEXT_RGB_SUM_MIN) -> int:
+    """Number of separate bands of bright pixel rows (text lines) inside box."""
+    x0, x1, y0, y1 = box
+    lines, in_line = 0, False
+    for y in range(y0, y1):
+        has_text = any(sum(img.getpixel((x, y))) > threshold for x in range(x0, x1, 2))
+        if has_text and not in_line:
+            lines += 1
+        in_line = has_text
+    return lines
 
 
 def load_image(vm, path: Path):
@@ -217,12 +264,27 @@ def test_panel_clock(vm, tmp_path: Path) -> bool:
     return report(bright > 20, f"clock text visible ({bright} px)")
 
 
+def launch_app(vm, name: str, title: str) -> bool:
+    """Run `app <name>`; true if the guest says launched and logs the window."""
+    offset = len(vm.serial_bytes())
+    vm.shell(f"app {name}", timeout=APP_LAUNCH_TIMEOUT_S)
+    time.sleep(1.0)  # let the compositor paint the new window
+    serial = vm.serial_bytes()[offset:]
+    launched = report(APP_LAUNCHED_MARKER.encode() in serial, f"app {name}: guest reports launched")
+    created = report(title in parse_window_titles(serial), f"app {name}: '{title}' window created")
+    return launched and created
+
+
 def test_apps_alive(vm, tmp_path: Path) -> bool:
-    """Boot windows must be on screen: sysmon dark bg at (900,100)."""
-    return expect(vm, [
-        (900, 100, WINDOW_RGB, 30),
-        (900, 1070, PANEL_RGB, 30),
-    ], "desktop windows + panel alive", tmp_path)
+    """Clean boot: no app windows at boot, panel alive, then `app files` opens one."""
+    boot_apps = app_window_titles(vm.boot_titles)
+    clean = report(not boot_apps, f"no application windows at boot (saw {boot_apps})")
+    panel = expect(vm, [(900, 1070, PANEL_RGB, 30)], "panel alive", tmp_path)
+    launched = launch_app(vm, "files", FILES_TITLE)
+    vm.screenshot(vm.out_dir / "files.png")
+    visible = launched and expect(vm, [(*FILES_BODY_XY, FILES_BODY_RGB, 10)],
+                                  "Files window on screen", tmp_path)
+    return clean and panel and launched and visible
 
 
 def probe_el0_window(vm, tmp_path: Path):
@@ -333,7 +395,9 @@ def test_calc_keys(vm, tmp_path: Path) -> bool:
     """B6.2 + Q1a regression: Calculator accepts keyboard input AND 5 % 0 must not panic."""
     boot_banners = serial_count(vm, b"initialization complete")
 
-    vm.click(120, 140)  # focus Calculator window
+    if not launch_app(vm, "calculator", CALC_TITLE):
+        return False
+    vm.click(*CALC_TITLE_XY)  # focus the Calculator window
     time.sleep(0.5)
 
     vm.key(KEY_SC["5"])
@@ -341,6 +405,7 @@ def test_calc_keys(vm, tmp_path: Path) -> bool:
     vm.key(KEY_SC["0"])
     vm.key(KEY_SC["enter"])
     time.sleep(1.5)
+    vm.screenshot(vm.out_dir / "calculator.png")
 
     ensure_shell(vm)
     vm.send_line("calc")  # state hook; output is informational only
@@ -354,8 +419,15 @@ def test_calc_keys(vm, tmp_path: Path) -> bool:
 
 def test_ctrl_c(vm, tmp_path: Path) -> bool:
     """Q2/Q6 regression: Ctrl+C chord reaches the guest."""
-    vm.click(400, 200)  # focus Terminal window
+    if not launch_app(vm, "terminal", TERMINAL_TITLE):
+        return False
+    vm.click(*TERMINAL_TITLE_XY)  # focus the Terminal window
     time.sleep(0.5)
+    vm.screenshot(vm.out_dir / "terminal.png")
+    banner_only = report(
+        count_text_lines(load_image(vm, tmp_path / "lb-term.ppm"), TERMINAL_BODY)
+        <= TERMINAL_BANNER_MAX_LINES,
+        "Terminal shows only its banner (no kernel log mirrored)")
 
     # Half-typed line, then Ctrl+C aborts it.
     for letter in "hel":
@@ -369,7 +441,7 @@ def test_ctrl_c(vm, tmp_path: Path) -> bool:
     except VmError as error:
         print(f"      {error}")
         ok = False
-    return report(ok, "Ctrl+C chord reaches guest; shell still alive")
+    return report(ok, "Ctrl+C chord reaches guest; shell still alive") and banner_only
 
 
 def test_pkg_install(vm, tmp_path: Path) -> bool:
@@ -433,6 +505,21 @@ def test_resolution(vm, tmp_path: Path) -> bool:
     return ok_size and panel_ok
 
 
+def test_welcome_once(vm, tmp_path: Path) -> bool:
+    """The Welcome window is persisted as seen: a 2nd boot of the same disk skips it."""
+    first = report(WELCOME_FIRST_BOOT_MARKER in vm.serial_bytes(),
+                   "first boot showed the Welcome window")
+    vm.restart_clean()
+    serial = vm.serial_bytes()
+    skipped = report(WELCOME_SKIPPED_MARKER in serial and WELCOME_FIRST_BOOT_MARKER not in serial,
+                     "second boot of the same disk skips Welcome")
+    ensure_shell(vm)
+    no_window = report(WELCOME_TITLE not in parse_window_titles(serial) and not vm.welcome_open(),
+                       "no Welcome window exists on the second boot (log and `wins`)")
+    vm.screenshot(vm.out_dir / "boot-second.png")
+    return first and skipped and no_window
+
+
 # Order: el0_app first (pristine post-boot flow), then GUI-click tests,
 # then bg_app after el0's app has exited, resolution late because it
 # shrinks the fb (calc_keys/ctrl_c do not sample the lower screen).
@@ -447,6 +534,7 @@ TESTS = {
     "resolution": test_resolution,
     "calc_keys": test_calc_keys,
     "ctrl_c": test_ctrl_c,
+    "welcome_once": test_welcome_once,  # last: reboots the VM
 }
 
 
@@ -487,28 +575,74 @@ class HarnessVM:
     consume each event.
     """
 
-    def __init__(self, name: str, kernel: str, display: str = "none"):
+    def __init__(self, name: str, kernel: str, display: str = "none",
+                 out_dir: Path = Path("tools/gui_test_out")):
         self.name = name
         self.kernel = kernel
         self.display = display
+        self.out_dir = Path(out_dir)
         self.store = VmStore()
         self.machine = None
         self.tmpdir = None
+        self.boot_titles = []
 
     def start(self) -> int:
-        """Create the throwaway VM with a qcow2 overlay and boot to the desktop."""
+        """Create the throwaway VM with a qcow2 overlay and boot to a clean desktop."""
         self.tmpdir = Path(tempfile.mkdtemp(prefix=f"harness-{self.name}-"))
+        self.out_dir.mkdir(parents=True, exist_ok=True)
         print(f"[harness] Scratch dir: {self.tmpdir}")
         self.store.create(VmConfig(
             name=self.name, memory_gb=4, resolution="1920x1080",
             display=self.display, audio=False, kernel=self.kernel, extra_args=[]))
         self.machine = Machine(self.name, self.store)
+        pid = self._boot()
+        self._settle_welcome()
+        return pid
+
+    def _boot(self) -> int:
+        """Boot the VM's disk to the desktop and record the windows it opened."""
         pid = self.machine.start(display=self.display)
         print(f"[harness] Started VM {self.name} (pid {pid})")
         self.machine.wait_serial(DESKTOP_READY_MARKER, BOOT_TIMEOUT_S)
         time.sleep(1.0)  # one extra desktop frame before driving the UI
         self._pass_greeter()
+        self.boot_titles = parse_window_titles(self.machine.serial_bytes())
         return pid
+
+    def restart_clean(self) -> None:
+        """Clean guest shutdown, then boot the same disk again (no SIGKILL)."""
+        self.machine.stop()
+        if self.machine.is_running():
+            raise VmError(f"VM {self.name} did not shut down")
+        self._boot()
+
+    def welcome_open(self) -> bool:
+        """Ask the guest (`wins`) whether the Welcome window exists.
+
+        The QEMU build registers the window but paints nothing for it, so
+        guest state, not pixels, is the evidence.
+        """
+        return WELCOME_TITLE in self.machine.shell("wins", WINS_TIMEOUT_S)
+
+    def _close_welcome(self) -> None:
+        self.click(*WELCOME_CLOSE_XY)
+        for _ in range(WELCOME_CLOSE_POLLS):
+            if not self.welcome_open():
+                return
+            time.sleep(1.0)
+        raise VmError("Welcome window still open after clicking its close button")
+
+    def _settle_welcome(self) -> None:
+        """Save the raw first-boot desktop, close Welcome if shown, save the clean one."""
+        shown = WELCOME_TITLE in self.boot_titles
+        if shown:
+            ensure_shell(self)
+            if not self.welcome_open():
+                raise VmError("guest created Welcome but `wins` does not list it")
+        self.machine.screenshot(self.out_dir / "boot-clean-raw.png")
+        if shown:
+            self._close_welcome()
+        self.machine.screenshot(self.out_dir / "boot-clean.png")
 
     def _pass_greeter(self) -> None:
         """C5 greeter: with multi-user disks boot blocks at a login card."""
@@ -602,7 +736,8 @@ def run_tests(args) -> int:
     """Run the selected tests and produce JUnit XML."""
     harness_name = f"harness-{uuid.uuid4().hex[:8]}"
     junit = JUnitBuilder()
-    vm = HarnessVM(harness_name, kernel=args.kernel, display=args.display)
+    vm = HarnessVM(harness_name, kernel=args.kernel, display=args.display,
+                   out_dir=Path(args.output_dir))
     names = list(TESTS) if args.test == "all" else [args.test]
     results = {}
     try:
@@ -643,6 +778,8 @@ def main():
                     help="Run a single test or all (default: all)")
     ap.add_argument("--junit", default="tools/gui_test_results.xml",
                     help="Path to write JUnit XML results (default: tools/gui_test_results.xml)")
+    ap.add_argument("--output-dir", default="tools/gui_test_out",
+                    help="Directory for screenshots (default: tools/gui_test_out)")
     ap.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = ap.parse_args()
 
