@@ -19,7 +19,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import paths, procctl
+from . import accel, paths, procctl
 from .channel import Channel, Endpoint
 from .config import VmError, VmStore
 from .display import display_argument, resolve_display
@@ -73,15 +73,20 @@ class Machine:
     def is_running(self):
         return self.pid() is not None
 
-    def start(self, display=None, resume=None):
-        """Boot the VM detached. ``resume`` restores a snapshot tag first."""
+    def start(self, display=None, resume=None, accel_override=None):
+        """Boot the VM detached. ``resume`` restores a snapshot tag first.
+
+        ``accel_override`` replaces the configured accelerator for this run only.
+        """
         if self.is_running():
             raise VmError(f"VM {self.name} is already running (pid {self.pid()})")
+        chosen_accel = accel_override or self.config.accel
+        require_accel(chosen_accel)
         self._prepare_runtime_dir()
         if not self.store.disk_path(self.name).exists():
             self.store.reset_disk(self.name)
         display = resolve_display(display or self.config.display, paths.qemu_binary())
-        command = self._qemu_command(display, resume)
+        command = self._qemu_command(display, resume, chosen_accel)
         with open(self.qemu_log_path, "wb") as qemu_log:
             process = subprocess.Popen(
                 command, env=self._qemu_env(), stdin=subprocess.DEVNULL,
@@ -285,14 +290,14 @@ class Machine:
         self.monitor_endpoint = self.monitor.allocate()
         self.serial_endpoint = self.serial.allocate()
 
-    def _qemu_command(self, display, resume):
+    def _qemu_command(self, display, resume, accel_choice=None):
         config = self.config
         disk = self.store.disk_path(self.name)
         command = [
             str(paths.qemu_binary()),
             "-M", f"{config.machine_type},graphics=on",
             "-m", f"{config.memory_gb}G",
-            "-cpu", "cortex-a76",
+            *accel.qemu_arguments(accel_choice or config.accel),
             "-kernel", str(config.kernel_path),
             "-dtb", str(paths.default_dtb()),
             "-drive", f"if=none,id=lobsterdisk,file={disk},format=qcow2",
@@ -344,6 +349,16 @@ class Machine:
                 return True
             time.sleep(POLL_INTERVAL_S)
         return False
+
+
+def require_accel(choice):
+    """Raise a ``VmError`` that explains why ``choice`` cannot run on this host."""
+    if choice != accel.KVM:
+        return
+    reason = accel.kvm_unavailable_reason()
+    if reason:
+        raise VmError(f"accel=kvm is not available: {reason}; "
+                      f"{accel.SWITCH_BACK_HINT}, or start once with `--accel tcg`")
 
 
 def _qemu_option_value(text):

@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from lobstervm import Machine, VmConfig, VmError, VmStore
-from lobstervm import paths
+from lobstervm import accel, paths
 
 try:
     from PIL import Image
@@ -635,8 +635,10 @@ class HarnessVM:
     """
 
     def __init__(self, name: str, kernel: str, display: str = "none",
-                 out_dir: Path = Path("tools/gui_test_out")):
+                 out_dir: Path = Path("tools/gui_test_out"),
+                 accel_choice: str = accel.DEFAULT_ACCEL):
         self.name = name
+        self.accel_choice = accel_choice
         self.kernel = kernel
         self.display = display
         self.out_dir = Path(out_dir)
@@ -652,7 +654,8 @@ class HarnessVM:
         print(f"[harness] Scratch dir: {self.tmpdir}")
         self.store.create(VmConfig(
             name=self.name, memory_gb=4, resolution="1920x1080",
-            display=self.display, audio=False, kernel=self.kernel, extra_args=[]))
+            display=self.display, audio=False, kernel=self.kernel, extra_args=[],
+            accel=self.accel_choice))
         self.machine = Machine(self.name, self.store)
         pid = self._boot()
         self._settle_welcome()
@@ -796,7 +799,7 @@ def run_tests(args) -> int:
     harness_name = f"harness-{uuid.uuid4().hex[:8]}"
     junit = JUnitBuilder()
     vm = HarnessVM(harness_name, kernel=args.kernel, display=args.display,
-                   out_dir=Path(args.output_dir))
+                   out_dir=Path(args.output_dir), accel_choice=args.accel)
     names = list(TESTS) if args.test == "all" else [args.test]
     results = {}
     try:
@@ -832,6 +835,8 @@ def main():
                     help="kernel8.img to boot (default: bundled)")
     ap.add_argument("--display", choices=["none", "auto", "gtk", "sdl", "cocoa", "vnc"], default="none",
                     help="QEMU display backend (default: none)")
+    ap.add_argument("--accel", choices=accel.ACCELERATORS, default=accel.DEFAULT_ACCEL,
+                    help="CPU acceleration for the VMs it creates (default: tcg)")
     ap.add_argument("--test", default="all",
                     choices=["all"] + list(TESTS),
                     help="Run a single test or all (default: all)")

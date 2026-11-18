@@ -56,12 +56,13 @@ Set with `create` and changed with `modify` (VM stopped).
 | Audio | `--audio on\|off` | headless VMs always run with `-audio none` |
 | Display | `--display` | `gtk`, `sdl`, `vnc`, `none` |
 | Kernel | `--kernel PATH` | `kernel8.img` to boot |
+| Acceleration | `--accel tcg\|kvm` | `tcg` (default) or `kvm`, see below |
 
 Resolution and shared folder reach the guest through device properties on the
 command line, for example:
 
 ```
-qemu-system-aarch64 -M raspi5b,graphics=on -m 4G -cpu cortex-a76 -kernel kernel8.img \
+qemu-system-aarch64 -M raspi5b,graphics=on -m 4G -accel tcg -cpu cortex-a76 -kernel kernel8.img \
   -dtb bcm2712-rpi-5-b.dtb -drive if=none,id=lobsterdisk,file=disk.qcow2,format=qcow2 \
   -serial stdio -monitor unix:monitor.sock,server,nowait -display none \
   -global lobster-sys.width=1280 -global lobster-sys.height=720 \
@@ -70,6 +71,19 @@ qemu-system-aarch64 -M raspi5b,graphics=on -m 4G -cpu cortex-a76 -kernel kernel8
 
 Commas in the shared folder path are doubled for QEMU. Example check of a
 shared folder: put `proof.txt` in the folder, then `lobstervm shell myvm 'ls /share'`.
+
+## KVM acceleration
+
+`tcg` (software emulation, `-accel tcg -cpu cortex-a76`) is the default, works
+on every host and is what CI uses. `kvm` (`-accel kvm -cpu host`) runs the
+guest on the host's own cores and boots far faster. It needs a Linux host with
+an aarch64 CPU (for example a Pi 5), a readable and writable `/dev/kvm`
+(usually membership of the `kvm` group), and a QEMU build with KVM support for
+`raspi5b`. Enable it per VM with `lobstervm create --accel kvm` or
+`lobstervm modify <vm> --accel kvm` (or the Acceleration choice in the GUI,
+which is greyed out with the reason when the host cannot do it), or for one run
+with `lobstervm start <vm> --accel kvm`. On an unsupported host `start` fails
+with the reason; switch back with `lobstervm modify <vm> --accel tcg`.
 
 ## Disks
 

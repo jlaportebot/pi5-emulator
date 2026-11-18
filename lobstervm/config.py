@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from . import paths
+from . import accel, paths
 
 VM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 RESOLUTION_PATTERN = re.compile(r"^(\d{3,4})x(\d{3,4})$")
@@ -38,6 +38,7 @@ class VmConfig:
     kernel: str = ""
     description: str = ""
     extra_args: list = field(default_factory=list)
+    accel: str = accel.DEFAULT_ACCEL
 
     def validate(self):
         if not VM_NAME_PATTERN.match(self.name):
@@ -50,6 +51,8 @@ class VmConfig:
             raise VmError(f"resolution must look like 1920x1080, got {self.resolution!r}")
         if self.display not in DISPLAY_BACKENDS:
             raise VmError(f"display must be one of {DISPLAY_BACKENDS}")
+        if self.accel not in accel.ACCELERATORS:
+            raise VmError(f"accel must be one of {accel.ACCELERATORS}")
         if self.shared_folder and not Path(self.shared_folder).is_dir():
             raise VmError(f"shared folder is not a directory: {self.shared_folder}")
         if self.kernel and not Path(self.kernel).is_file():

@@ -4,7 +4,7 @@ import sys
 import time
 from dataclasses import fields
 
-from . import disk, paths
+from . import accel, disk, paths
 from .config import MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS, VmConfig, VmError, VmStore
 from .machine import Machine
 
@@ -18,6 +18,8 @@ def _add_config_options(parser):
     parser.add_argument("--resolution", help="e.g. 1920x1080")
     parser.add_argument("--display", choices=DISPLAY_BACKENDS)
     parser.add_argument("--audio", choices=("on", "off"))
+    parser.add_argument("--accel", choices=accel.ACCELERATORS,
+                        help="tcg (software, default) or kvm (aarch64 Linux host with /dev/kvm)")
     parser.add_argument("--share", dest="shared_folder",
                         help="host directory exposed to the guest as /share")
     parser.add_argument("--kernel", help="kernel8.img to boot (default: bundled)")
@@ -26,7 +28,7 @@ def _add_config_options(parser):
 
 def _apply_config_options(config, args):
     for field in ("memory_gb", "resolution", "display", "shared_folder",
-                  "kernel", "description"):
+                  "kernel", "description", "accel"):
         value = getattr(args, field, None)
         if value is not None:
             setattr(config, field, value)
@@ -43,7 +45,7 @@ def cmd_list(store, args):
         machine = Machine(name, store)
         config = machine.config
         print(f"{name:<20} {machine.status():<8} {config.memory_gb}GB "
-              f"{config.resolution} display={config.display}")
+              f"{config.resolution} display={config.display} accel={config.accel}")
     return 0
 
 
@@ -88,7 +90,8 @@ def cmd_start(store, args):
         print(f"Created default VM {DEFAULT_VM}")
     machine = Machine(args.name, store)
     display = "none" if args.headless else args.display
-    pid = machine.start(display=display, resume=args.resume)
+    pid = machine.start(display=display, resume=args.resume,
+                         accel_override=args.accel)
     print(f"Started {args.name} (pid {pid})")
     if args.wait:
         boot_ms = machine.wait_desktop()
@@ -257,6 +260,8 @@ def build_parser():
     start = add("start", cmd_start, "boot a VM")
     start.add_argument("--headless", action="store_true", help="no window")
     start.add_argument("--display", choices=DISPLAY_BACKENDS)
+    start.add_argument("--accel", choices=accel.ACCELERATORS,
+                       help="override the VM's accelerator for this run")
     start.add_argument("--resume", metavar="TAG", help="restore a snapshot")
     start.add_argument("--wait", action="store_true", help="wait for the desktop")
     stop = add("stop", cmd_stop, "shut the guest down cleanly")

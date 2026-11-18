@@ -14,6 +14,7 @@ from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 from typing import Optional, Callable, Any
 
+from . import accel
 from .config import VmConfig, VmStore, VmError, MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS
 from .firstrun import ensure_default_vm, missing_components_message
 from .machine import Machine
@@ -24,13 +25,35 @@ from .paths import MissingComponent
 REFRESH_INTERVAL_MS = 3000
 SERIAL_TAIL_LINES = 100
 SERIAL_REFRESH_MS = 500
+KVM_REASON_WRAP_PX = 260
 
 # ── Pure helper functions (testable without Tk) ───────────────────────
 
 
 def format_vm_row(config: VmConfig, state: str) -> str:
     """Format a single VM row for the listbox."""
-    return f"{config.name:<20} {state:<8} {config.memory_gb}GB {config.resolution} display={config.display}"
+    return f"{config.name:<20} {state:<8} {config.memory_gb}GB {config.resolution} display={config.display} accel={config.accel}"
+
+
+def add_accel_choice(frame, row: int, variable: tk.StringVar) -> int:
+    """Add the TCG/KVM radio buttons at ``row``; returns the next free row.
+
+    KVM is disabled, with the reason shown beneath, when this host cannot use it.
+    """
+    reason = accel.kvm_unavailable_reason()
+    ttk.Label(frame, text="Acceleration:").grid(row=row, column=0, sticky=tk.W, pady=4)
+    choices = ttk.Frame(frame)
+    choices.grid(row=row, column=1, pady=4, sticky=tk.W)
+    ttk.Radiobutton(choices, text="TCG (software)", value=accel.TCG,
+                    variable=variable).pack(side=tk.LEFT)
+    kvm_state = tk.DISABLED if reason else tk.NORMAL
+    ttk.Radiobutton(choices, text="KVM", value=accel.KVM, variable=variable,
+                    state=kvm_state).pack(side=tk.LEFT, padx=(10, 0))
+    if not reason:
+        return row + 1
+    ttk.Label(frame, text=f"KVM unavailable: {reason}", foreground="gray",
+              wraplength=KVM_REASON_WRAP_PX).grid(row=row + 1, column=1, sticky=tk.W)
+    return row + 2
 
 
 def serial_tail(path: Path, n: int = SERIAL_TAIL_LINES) -> str:
@@ -106,6 +129,7 @@ class NewVmDialog:
         self.memory_var = tk.StringVar(value="4")
         self.resolution_var = tk.StringVar(value="1920x1080")
         self.disk_size_var = tk.StringVar(value="20")
+        self.accel_var = tk.StringVar(value=accel.DEFAULT_ACCEL)
 
         # Layout
         frame = ttk.Frame(self.top, padding=15)
@@ -129,9 +153,11 @@ class NewVmDialog:
         ttk.Label(frame, text="Disk size (GB):").grid(row=3, column=0, sticky=tk.W, pady=4)
         ttk.Entry(frame, textvariable=self.disk_size_var, width=30).grid(row=3, column=1, pady=4)
 
+        next_row = add_accel_choice(frame, 4, self.accel_var)
+
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=4, column=0, columnspan=2, pady=(15, 0))
+        btn_frame.grid(row=next_row, column=0, columnspan=2, pady=(15, 0))
         ttk.Button(btn_frame, text="Create", command=self._on_create).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
 
@@ -141,7 +167,7 @@ class NewVmDialog:
         self.disk_size_var.trace_add("write", lambda *_: self._validate())
 
         self.status_label = ttk.Label(frame, text="", foreground="red")
-        self.status_label.grid(row=5, column=0, columnspan=2, pady=(5, 0))
+        self.status_label.grid(row=next_row + 1, column=0, columnspan=2, pady=(5, 0))
 
         self.create_btn = btn_frame.winfo_children()[0]
         self._validate()
@@ -169,6 +195,7 @@ class NewVmDialog:
                 name=name,
                 memory_gb=int(self.memory_var.get()),
                 resolution=self.resolution_var.get().strip(),
+                accel=self.accel_var.get(),
             )
             config.validate()
             self.store.create(config)
@@ -217,6 +244,7 @@ class SettingsDialog:
         self.shared_var = tk.StringVar(value=config.shared_folder)
         self.kernel_var = tk.StringVar(value=config.kernel)
         self.desc_var = tk.StringVar(value=config.description)
+        self.accel_var = tk.StringVar(value=config.accel)
 
         frame = ttk.Frame(self.top, padding=15)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -241,6 +269,8 @@ class SettingsDialog:
 
         ttk.Checkbutton(frame, text="Audio", variable=self.audio_var).grid(row=row, column=1, sticky=tk.W, pady=4)
         row += 1
+
+        row = add_accel_choice(frame, row, self.accel_var)
 
         ttk.Label(frame, text="Shared folder:").grid(row=row, column=0, sticky=tk.W, pady=4)
         shared_frame = ttk.Frame(frame)
@@ -287,6 +317,7 @@ class SettingsDialog:
             self.config.resolution = self.resolution_var.get().strip()
             self.config.display = self.display_var.get().strip()
             self.config.audio = self.audio_var.get()
+            self.config.accel = self.accel_var.get()
             self.config.shared_folder = self.shared_var.get().strip()
             self.config.kernel = self.kernel_var.get().strip()
             self.config.description = self.desc_var.get().strip()
@@ -491,6 +522,7 @@ class LobsterVmManager:
             ("Resolution", "resolution"),
             ("Display", "display"),
             ("Audio", "audio"),
+            ("Acceleration", "accel"),
             ("Shared Folder", "shared_folder"),
             ("Kernel", "kernel"),
             ("Description", "description"),
@@ -613,6 +645,7 @@ class LobsterVmManager:
             self.detail_vars["resolution"].set(config.resolution)
             self.detail_vars["display"].set(config.display)
             self.detail_vars["audio"].set("On" if config.audio else "Off")
+            self.detail_vars["accel"].set(config.accel.upper())
             self.detail_vars["shared_folder"].set(config.shared_folder or "(none)")
             self.detail_vars["kernel"].set(config.kernel or "(default)")
             self.detail_vars["description"].set(config.description or "(none)")
