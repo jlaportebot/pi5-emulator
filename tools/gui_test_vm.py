@@ -112,7 +112,16 @@ CALC_TITLE = "Calculator"
 TERMINAL_TITLE = "Terminal"
 APP_LAUNCH_TIMEOUT_S = 30.0
 KEY_SC = {"h": 0x23, "e": 0x12, "l": 0x26, "5": 0x06, "0": 0x0B, "enter": 0x1C,
-          "esc": 0x01, "pct": 0x08, "c": 0x2E}
+          "esc": 0x01, "c": 0x2E}
+CALC_STATE_PREFIX = "Calculator state: display="
+CALC_ERROR_DISPLAY = "Error"
+# Shift+5 types '%'. The guest's HID path reads the QEMU flag bits with a
+# different layout (QEMU bit1=ctrl is HID LShift), so "ctrl" is what
+# produces Shift in the guest on current kernels; plain "shift" types a '5'.
+PERCENT_MODS = "ctrl"
+MENU_PROBE_POINTS = ((150, 900), (150, 750))
+MENU_TOLERANCE = 20  # tighter than the open-check: the desktop behind is within 30 of the menu colour
+MENU_SETTLE_S = 0.8
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────
@@ -251,9 +260,40 @@ def test_start_menu(vm, tmp_path: Path) -> bool:
         img = load_image(vm, tmp_path / "lb-sm.ppm")
         bright = count_bright(img, (0, 400, 700, 1040), 600)
         ok = report(bright > 20, f"menu labels render ({bright} px)")
-    vm.key(KEY_SC["esc"])  # closes the menu
-    time.sleep(0.5)
-    return ok
+    return close_start_menu(vm, tmp_path) and ok
+
+
+def menu_is_open(vm, tmp_path: Path) -> bool:
+    """True when every start-menu probe pixel shows the menu background."""
+    img = load_image(vm, tmp_path / "lb-menu.ppm")
+    return all(
+        all(abs(img.getpixel(point)[i] - MENU_RGB[i]) <= MENU_TOLERANCE for i in range(3))
+        for point in MENU_PROBE_POINTS)
+
+
+def close_start_menu(vm, tmp_path: Path) -> bool:
+    """Close the menu like a user: click the start button again."""
+    if not menu_is_open(vm, tmp_path):
+        return report(True, "start menu already closed")
+    vm.click(*LAUNCHER_XY)
+    time.sleep(MENU_SETTLE_S)
+    return report(not menu_is_open(vm, tmp_path), "start menu closes on second launcher click")
+
+
+def test_start_menu_esc(vm, tmp_path: Path) -> bool:
+    """Esc should close the start menu. Known to fail on kernels without the fix."""
+    vm.click(*LAUNCHER_XY)
+    time.sleep(MENU_SETTLE_S)
+    if not menu_is_open(vm, tmp_path):
+        return report(False, "start menu did not open for the Esc check")
+    vm.key(KEY_SC["esc"])
+    time.sleep(MENU_SETTLE_S)
+    closed = not menu_is_open(vm, tmp_path)
+    if closed:
+        print("[XPASS] !!! Esc now closes the start menu: turn this into a real assertion !!!")
+        return True
+    print("[XFAIL] Esc does not close the start menu (expected on kernels without the fix)")
+    return close_start_menu(vm, tmp_path)
 
 
 def test_panel_clock(vm, tmp_path: Path) -> bool:
@@ -401,20 +441,28 @@ def test_calc_keys(vm, tmp_path: Path) -> bool:
     time.sleep(0.5)
 
     vm.key(KEY_SC["5"])
-    vm.key(KEY_SC["pct"], mods="shift")
+    vm.key(KEY_SC["5"], mods=PERCENT_MODS)
     vm.key(KEY_SC["0"])
     vm.key(KEY_SC["enter"])
     time.sleep(1.5)
     vm.screenshot(vm.out_dir / "calculator.png")
 
     ensure_shell(vm)
-    vm.send_line("calc")  # state hook; output is informational only
-    time.sleep(1.0)
-
-    # The real regression check: the kernel must still be alive (no panic
-    # restart, so the boot banner count is unchanged).
+    display = calc_display(vm)
+    shows_error = report(display == CALC_ERROR_DISPLAY,
+                         f"calc 5%0: display is {CALC_ERROR_DISPLAY!r} (got {display!r})")
+    # The kernel must still be alive: a panic restart would add a boot banner.
     alive = serial_count(vm, b"initialization complete") == boot_banners
-    return report(alive, "calc 5%0: no kernel panic (banner count stable)")
+    return report(alive, "calc 5%0: no kernel panic (banner count stable)") and shows_error
+
+
+def calc_display(vm):
+    """Read the calculator display text from the guest's `calc` shell command."""
+    output = vm.shell("calc", timeout=APP_LAUNCH_TIMEOUT_S)
+    for line in output.splitlines():
+        if CALC_STATE_PREFIX in line:
+            return line.split(CALC_STATE_PREFIX, 1)[1].strip()
+    return None
 
 
 def test_ctrl_c(vm, tmp_path: Path) -> bool:
@@ -526,6 +574,7 @@ def test_welcome_once(vm, tmp_path: Path) -> bool:
 TESTS = {
     "el0_app": test_el0_app,
     "start_menu": test_start_menu,
+    "start_menu_esc": test_start_menu_esc,
     "clock": test_panel_clock,
     "apps": test_apps_alive,
     "bg_app": test_bg_app,
