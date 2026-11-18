@@ -520,13 +520,16 @@ class TestPaths(unittest.TestCase):
 
     def test_data_home_default(self):
         """data_home should return XDG path or ~/.local/share/lobstervm."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(paths, "host_os", return_value=paths.LINUX), \
+                patch.object(Path, "home", return_value=Path("/home/u")):
             home = paths.data_home()
             self.assertIn("lobstervm", str(home))
 
     def test_runtime_home_default(self):
         """runtime_home should return XDG_RUNTIME_DIR or /tmp/lobstervm-UID."""
-        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": "/run/user/1000"}, clear=True):
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": "/run/user/1000"}, clear=True), \
+                patch.object(paths, "host_os", return_value=paths.LINUX):
             runtime = paths.runtime_home()
             self.assertIn("lobstervm", str(runtime))
 

@@ -69,7 +69,7 @@ class TestDeviceProperties(unittest.TestCase):
         folder = Path(self.tmpdir) / "a,b"
         folder.mkdir()
         command = self.command(shared_folder=str(folder))
-        self.assertIn(f"lobster-share.dir={self.tmpdir}/a,,b", command)
+        self.assertIn(f"lobster-share.dir={self.tmpdir}{os.sep}a,,b", command)
 
     def test_spaces_in_shared_folder_stay_one_argument(self):
         folder = Path(self.tmpdir) / "my files"

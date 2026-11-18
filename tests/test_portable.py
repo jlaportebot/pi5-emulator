@@ -17,6 +17,7 @@ from lobstervm import channel, display, firstrun, paths, procctl
 from lobstervm.config import VmConfig, VmError, VmStore
 from lobstervm.machine import Machine
 
+FAKE_SIGKILL = 9
 PLATFORMS = {"windows": "win32", "macos": "darwin", "linux": "linux"}
 
 
@@ -142,6 +143,7 @@ class TestBundleDiscovery(TempDirCase):
         qemu.write_bytes(b"")
         with on_platform("windows"), self.frozen(self.tmp / "lobstervm.exe"), \
                 patch.dict(os.environ, {}, clear=True), \
+                patch.object(Path, "home", return_value=self.tmp), \
                 patch.object(paths, "_which", return_value=None):
             self.assertEqual(paths.qemu_binary(), qemu)
 
@@ -305,9 +307,10 @@ class TestProcessControl(unittest.TestCase):
         kernel32.TerminateProcess.assert_called_once_with(7, procctl.FORCED_EXIT_CODE)
 
     def test_posix_force_kill_sends_sigkill(self):
-        with on_platform("linux"), patch.object(os, "kill") as kill:
+        with on_platform("linux"), patch.object(os, "kill") as kill, \
+                patch.object(signal, "SIGKILL", FAKE_SIGKILL, create=True):
             procctl.force_kill(42)
-        kill.assert_called_once_with(42, signal.SIGKILL)
+        kill.assert_called_once_with(42, FAKE_SIGKILL)
 
     def test_posix_alive_semantics(self):
         with on_platform("linux"):
