@@ -90,7 +90,9 @@ jobs:
         run: packaging/make_macos_dmg.sh dist/LobsterVM.app "$VERSION" installers
       - name: Linux AppImage
         if: runner.os == 'Linux'
-        run: packaging/make_appimage.sh dist/LobsterVM "$VERSION" installers
+        run: |
+          sudo apt-get update && sudo apt-get install -y desktop-file-utils
+          packaging/make_appimage.sh dist/LobsterVM "$VERSION" installers
       - name: Installer size
         run: ls -l installers
       - uses: actions/upload-artifact@v4

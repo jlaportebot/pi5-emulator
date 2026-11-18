@@ -44,8 +44,9 @@ gui_analysis = analyse("entry_gui.py")
 cli_exe = executable(cli_analysis, CLI_NAME, windowed=False)
 gui_exe = executable(gui_analysis, APP_NAME, windowed=True)
 collected = COLLECT(  # noqa: F821
-    cli_exe, cli_analysis.binaries, cli_analysis.datas,
+    # The GUI comes first: PyInstaller makes the first executable the .app's main one.
     gui_exe, gui_analysis.binaries, gui_analysis.datas,
+    cli_exe, cli_analysis.binaries, cli_analysis.datas,
     upx=False, name=APP_NAME)
 
 if sys.platform == "darwin":
