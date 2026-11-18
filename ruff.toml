@@ -7,5 +7,3 @@ select = ["E4", "E7", "E9", "F"]
 # These scripts put the repo root on sys.path before importing lobstervm.
 "tests/*" = ["E402"]
 "tools/*" = ["E402"]
-# Legacy harness kept frozen as the behavioural reference (do not edit).
-"tools/gui_test.py" = ["F841"]
