@@ -100,8 +100,12 @@ WELCOME_SKIPPED_MARKER = b"[welcome] Welcome already seen, skipping"
 WELCOME_CLOSE_XY = (1197, 377)    # red close button of the centred Welcome window
 WELCOME_CLOSE_POLLS = 10
 WINS_TIMEOUT_S = 30.0
-FILES_BODY_XY = (550, 300)        # white file list of the File Manager
-FILES_BODY_RGB = (246, 248, 250)
+# Files window body probe per window title: the O4.2 "Files" app has a dark list body;
+# kernels before it opened a "File Manager" with a white list.
+FILES_BODY_PROBES = {
+    "Files": ((900, 400), (30, 30, 46)),
+    "File Manager": ((550, 300), (246, 248, 250)),
+}
 CALC_TITLE_XY = (260, 154)        # Calculator title bar (focus target)
 TERMINAL_TITLE_XY = (400, 94)     # Terminal title bar (focus target)
 TERMINAL_BODY = (104, 816, 128, 576)  # x0, x1, y0, y1 of the Terminal text area
@@ -112,7 +116,7 @@ TEXT_RGB_SUM_MIN = 450            # brightness sum separating glyphs from backgr
 TERMINAL_BANNER_MAX_LINES = 4     # welcome banner is 3 text lines; a log leak is far more
 APP_LAUNCHED_MARKER = "app: launched"
 WINDOW_TITLE_RE = re.compile(rb"\[wm\] Created window id=\d+ '([^']*)'")
-FILES_TITLE = "File Manager"
+FILES_TITLES = ("Files", "File Manager")  # current kernels first, then pre-O4.2 ones
 CALC_TITLE = "Calculator"
 TERMINAL_TITLE = "Terminal"
 APP_LAUNCH_TIMEOUT_S = 30.0
@@ -332,15 +336,22 @@ def test_panel_clock(vm, tmp_path: Path) -> bool:
     return report(bright > 20, f"clock text visible ({bright} px)")
 
 
-def launch_app(vm, name: str, title: str) -> bool:
-    """Run `app <name>`; true if the guest says launched and logs the window."""
+def launch_app_titled(vm, name: str, titles: tuple):
+    """Run `app <name>`; the first of `titles` the guest logged a window for, or None."""
     offset = len(vm.serial_bytes())
     vm.shell(f"app {name}", timeout=APP_LAUNCH_TIMEOUT_S)
     time.sleep(1.0)  # let the compositor paint the new window
     serial = vm.serial_bytes()[offset:]
     launched = report(APP_LAUNCHED_MARKER.encode() in serial, f"app {name}: guest reports launched")
-    created = report(title in parse_window_titles(serial), f"app {name}: '{title}' window created")
-    return launched and created
+    logged = parse_window_titles(serial)
+    title = next((t for t in titles if t in logged), None)
+    created = report(title is not None, f"app {name}: window created (wanted one of {titles}, saw {logged})")
+    return title if launched and created else None
+
+
+def launch_app(vm, name: str, title: str) -> bool:
+    """Run `app <name>`; true if the guest says launched and logs the window."""
+    return launch_app_titled(vm, name, (title,)) is not None
 
 
 def test_apps_alive(vm, tmp_path: Path) -> bool:
@@ -348,11 +359,13 @@ def test_apps_alive(vm, tmp_path: Path) -> bool:
     boot_apps = app_window_titles(vm.boot_titles)
     clean = report(not boot_apps, f"no application windows at boot (saw {boot_apps})")
     panel = expect(vm, [(900, 1070, PANEL_RGB, 30)], "panel alive", tmp_path)
-    launched = launch_app(vm, "files", FILES_TITLE)
+    title = launch_app_titled(vm, "files", FILES_TITLES)
     vm.screenshot(vm.out_dir / "files.png")
-    visible = launched and expect(vm, [(*FILES_BODY_XY, FILES_BODY_RGB, 10)],
-                                  "Files window on screen", tmp_path)
-    return clean and panel and launched and visible
+    visible = False
+    if title is not None:
+        body_xy, body_rgb = FILES_BODY_PROBES[title]
+        visible = expect(vm, [(*body_xy, body_rgb, 10)], f"{title} window on screen", tmp_path)
+    return clean and panel and title is not None and visible
 
 
 def probe_el0_window(vm, tmp_path: Path):
