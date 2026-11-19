@@ -166,7 +166,11 @@ def collect_diagnostics(env, out):
                     ["find", env["TMPDIR"], "-maxdepth", "4", "-not", "-path", "*/.mount_*"]):
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         report.append(f"$ {' '.join(command)}\n{result.stdout}{result.stderr}")
+    report.append("env: " + " ".join(f"{k}={v}" for k, v in sorted(env.items())
+                                     if k.startswith(("SDL", "DYLD", "QEMU"))))
     if sys.platform == "darwin":
+        subprocess.run(["screencapture", "-x", str(out / "screen.png")], check=False,
+                       timeout=SAMPLE_TIMEOUT_S)
         report.append(sample_qemu())
     (out / "diagnostics.txt").write_text("\n".join(report))
 
