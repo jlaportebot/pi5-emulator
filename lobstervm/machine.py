@@ -19,7 +19,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import accel, paths, procctl
+from . import accel, paths, ppm, procctl
 from .channel import Channel, Endpoint
 from .config import VmError, VmStore
 from .display import display_argument, resolve_display
@@ -40,6 +40,7 @@ MONITOR_CHANNEL = "monitor"
 SERIAL_CHANNEL = "serial"
 MONITOR_START_TIMEOUT_S = 60.0
 SCREENSHOT_WRITE_TIMEOUT_S = 10.0
+PNG_UNSUPPORTED_MESSAGE = "PNG support"
 LOG_TAIL_CHARS = 600
 POWEROFF_GRACE_S = 5.0
 LEGACY_DEVICE_ENV = ("LBST_RES", "LBST_SHARE", "LBST_DISKIMG")
@@ -184,12 +185,29 @@ class Machine:
     def screenshot(self, path):
         """Write the guest framebuffer to ``path`` (.png or .ppm)."""
         path = Path(path).resolve()
-        fmt = " -f png" if path.suffix.lower() == ".png" else ""
         path.unlink(missing_ok=True)
+        if path.suffix.lower() != ".png":
+            self._screendump(path, "")
+        elif PNG_UNSUPPORTED_MESSAGE in self._screendump(path, " -f png"):
+            self._screendump_png_via_ppm(path)
+        return path
+
+    def _screendump(self, path, fmt):
+        """Run HMP ``screendump`` and wait for the file; returns the monitor reply."""
         # HMP unescapes backslashes in strings, so Windows paths need forward slashes.
         reply = self.hmp(f'screendump "{path.as_posix()}"{fmt}')
-        self._wait_file_written(path, reply)
-        return path
+        if PNG_UNSUPPORTED_MESSAGE not in reply:
+            self._wait_file_written(path, reply)
+        return reply
+
+    def _screendump_png_via_ppm(self, path):
+        """QEMU built without libpng (Windows archive): dump PPM and encode it here."""
+        ppm_path = path.with_suffix(".ppm")
+        self._screendump(ppm_path, "")
+        try:
+            path.write_bytes(ppm.ppm_to_png(ppm_path.read_bytes()))
+        finally:
+            ppm_path.unlink(missing_ok=True)
 
     def _wait_file_written(self, path, monitor_reply=""):
         """QEMU may reply before the dump is flushed (Windows): wait for a stable size."""

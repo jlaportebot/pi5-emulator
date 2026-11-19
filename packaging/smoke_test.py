@@ -28,6 +28,8 @@ MIN_PNG_BYTES = 2000
 MIN_PIXEL_VARIANCE = 20.0
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 OVERRIDE_PREFIXES = ("LOBSTER", "XDG_", "PYTHON")
+STALE_MOUNT_PREFIX = ".mount_"
+SAMPLE_TIMEOUT_S = 60
 BOOT_MS_PATTERN = re.compile(r"guest boot (\d+) ms")
 
 
@@ -113,14 +115,15 @@ def boot_and_inspect(runner, png, report):
     runner.run(["stop", VM_NAME])
 
 
-def lifecycle(runner, png, report, serial_out):
+def lifecycle(runner, png, report, out):
     check_quickstart(runner)
     runner.run(["create", VM_NAME, "--display", "none"])
     try:
         boot_and_inspect(runner, png, report)
     except (SystemExit, subprocess.SubprocessError):
+        collect_diagnostics(runner.env, out)
         runner.run(["screenshot", VM_NAME, str(png.with_name("failure.png"))], check=False)
-        serial_out.write_text(runner.run(["serial", VM_NAME, "-n", str(SERIAL_TAIL_LINES)],
+        (out / "serial.txt").write_text(runner.run(["serial", VM_NAME, "-n", str(SERIAL_TAIL_LINES)],
                                          check=False))
         raise
     finally:
@@ -147,8 +150,36 @@ def parse_args(argv):
 
 def save_qemu_logs(home, out):
     """Keep every VM's qemu.log: the runtime dirs vanish with the throwaway HOME."""
-    for log in home.rglob("qemu.log"):
-        shutil.copyfile(log, out / f"qemu-{log.parent.name}.log")
+    for directory, subdirs, names in os.walk(home, onerror=lambda error: None):
+        subdirs[:] = [name for name in subdirs if not name.startswith(STALE_MOUNT_PREFIX)]
+        if "qemu.log" in names:
+            shutil.copyfile(Path(directory) / "qemu.log",
+                            out / f"qemu-{Path(directory).name}.log")
+
+
+def collect_diagnostics(env, out):
+    """Best-effort process and socket state when the VM did not come up."""
+    if sys.platform.startswith("win"):
+        return
+    report = []
+    for command in (["ps", "-axo", "pid,ppid,stat,etime,command"],
+                    ["find", env["TMPDIR"], "-maxdepth", "4", "-not", "-path", "*/.mount_*"]):
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        report.append(f"$ {' '.join(command)}\n{result.stdout}{result.stderr}")
+    if sys.platform == "darwin":
+        report.append(sample_qemu())
+    (out / "diagnostics.txt").write_text("\n".join(report))
+
+
+def sample_qemu():
+    """``sample`` the first running QEMU (stack of what it is stuck on)."""
+    pids = subprocess.run(["pgrep", "-f", "qemu-system-aarch64"], capture_output=True,
+                          text=True, check=False).stdout.split()
+    if not pids:
+        return "no qemu process running"
+    result = subprocess.run(["sample", pids[0], "2"], capture_output=True, text=True,
+                            check=False, timeout=SAMPLE_TIMEOUT_S)
+    return f"$ sample {pids[0]}\n{result.stdout}{result.stderr}"
 
 
 def run_smoke(command, out):
@@ -159,7 +190,7 @@ def run_smoke(command, out):
             open(out / "smoke.log", "w") as log:
         env = clean_environment(Path(home_dir))
         try:
-            lifecycle(Runner(command, env, log), out / "shot.png", report, out / "serial.txt")
+            lifecycle(Runner(command, env, log), out / "shot.png", report, out)
         finally:
             save_qemu_logs(Path(home_dir), out)
             (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")

@@ -523,6 +523,45 @@ class TestScreenshotWrite(TempDirCase):
         self.wait_written(target)
 
 
+class TestPpmToPng(unittest.TestCase):
+    def test_roundtrip_through_pillow(self):
+        from io import BytesIO
+
+        from PIL import Image
+
+        from lobstervm import ppm
+        pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30])
+        png = ppm.ppm_to_png(b"P6\n2 2\n255\n" + pixels)
+        image = Image.open(BytesIO(png)).convert("RGB")
+        self.assertEqual(image.size, (2, 2))
+        self.assertEqual(list(image.getdata()), [(255, 0, 0), (0, 255, 0), (0, 0, 255),
+                                                 (10, 20, 30)])
+
+    def test_rejects_truncated_pixels_and_wrong_magic(self):
+        from lobstervm import ppm
+        with self.assertRaises(ValueError):
+            ppm.ppm_to_png(b"P6\n2 2\n255\nabc")
+        with self.assertRaises(ValueError):
+            ppm.ppm_to_png(b"P5\n1 1\n255\nx")
+
+
+class TestScreenshotFallback(TempDirCase):
+    def test_png_falls_back_to_ppm_when_qemu_lacks_libpng(self):
+        from PIL import Image
+        machine = Machine.__new__(Machine)
+        target = self.tmp / "s.png"
+
+        def fake_hmp(command, **_):
+            if "-f png" in command:
+                return "Error: Enable PNG support with libpng for screendump"
+            Path(command.split('"')[1]).write_bytes(b"P6\n1 1\n255\n\x01\x02\x03")
+            return ""
+        machine.hmp = fake_hmp
+        self.assertEqual(machine.screenshot(target), target)
+        self.assertEqual(Image.open(target).convert("RGB").getpixel((0, 0)), (1, 2, 3))
+        self.assertFalse(target.with_suffix(".ppm").exists())
+
+
 class TestQuickstartCommand(TempDirCase):
     def run_quickstart(self, store, problem=""):
         from lobstervm import cli
