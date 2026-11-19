@@ -9,15 +9,17 @@ set -euo pipefail
 app="$1"
 qemu_dir="$(cd "$app/Contents/Resources/qemu" && pwd -P)"
 qemu_bin="$qemu_dir/bin/qemu-system-aarch64"
-brew install sdl3
-real="$(brew --prefix sdl3)/lib/libSDL3.0.dylib"
-test -f "$real"
-for name in libSDL3.dylib libSDL3.0.dylib; do
-  cp -L "$real" "$qemu_dir/lib/$name"
-  chmod u+w "$qemu_dir/lib/$name"
-  install_name_tool -id "@rpath/$name" "$qemu_dir/lib/$name"
-  codesign --force --sign - --timestamp=none "$qemu_dir/lib/$name"
-done
+if [ ! -f "$qemu_dir/lib/libSDL3.dylib" ]; then
+  brew install sdl3
+  real="$(brew --prefix sdl3)/lib/libSDL3.0.dylib"
+  test -f "$real"
+  for name in libSDL3.dylib libSDL3.0.dylib; do
+    cp -L "$real" "$qemu_dir/lib/$name"
+    chmod u+w "$qemu_dir/lib/$name"
+    install_name_tool -id "@rpath/$name" "$qemu_dir/lib/$name"
+    codesign --force --sign - --timestamp=none "$qemu_dir/lib/$name"
+  done
+fi
 otool -L "$qemu_dir/lib/libSDL3.dylib"
 
 # macOS has no GNU timeout; perl ships with the OS
