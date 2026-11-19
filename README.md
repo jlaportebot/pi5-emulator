@@ -12,6 +12,37 @@ BCM2712 SoC plus the `lobster-*` devices) lives in a QEMU fork.
 
 ## Install
 
+### One-click installers (recommended)
+
+Download from the [latest release](https://github.com/jlaportebot/pi5-emulator/releases/latest)
+(rolling builds: the `nightly` prerelease). Each installer bundles QEMU, the
+LobsterOS kernel, the device tree and a base disk; nothing else is needed.
+Verify downloads against `SHA256SUMS`.
+
+| OS | File | Install |
+| --- | --- | --- |
+| Windows (x64) | `LobsterVM-Setup-<ver>-x64.exe` | Run it (per-user, no admin). Start menu entry, optional desktop shortcut, uninstaller in Settings > Apps. |
+| macOS (Apple Silicon) | `LobsterVM-<ver>-arm64.dmg` | Open the dmg, drag LobsterVM to Applications. |
+| Linux (x86_64, aarch64) | `LobsterVM-<ver>-<arch>.AppImage` | `chmod +x` the file and run it. |
+
+First run: launch LobsterVM. On first launch with no VMs it creates a default
+VM named "LobsterOS" from the bundled disk; click Start. The CLI is reachable
+by passing arguments to the same binary (for example
+`./LobsterVM-<ver>-x86_64.AppImage create demo`, or `lobstervm.exe` in the
+Windows install folder).
+
+The builds are not code-signed (QEMU runs with TCG, so no entitlements are
+needed):
+
+- Windows SmartScreen: click "More info", then "Run anyway".
+- macOS Gatekeeper: right-click the app, choose "Open", then "Open" again.
+- Uninstall: Windows via Settings > Apps (or the Start menu uninstaller);
+  macOS by deleting LobsterVM.app (VM data is in
+  `~/Library/Application Support/LobsterVM`); Linux by deleting the AppImage
+  (data in `~/.local/share/lobstervm`).
+
+### From source
+
 ```bash
 bash install.sh
 ```
@@ -22,7 +53,7 @@ This links `lobstervm.sh` to `~/.local/bin/lobstervm`, copies
 `~/.local/bin` is on `PATH`. Remove it again with `bash uninstall.sh`.
 Without installing, use `./lobstervm.sh` from the repository root.
 
-Requirements: Python 3.10+, `qemu-utils` (`qemu-img`), `e2fsprogs`, Pillow for
+Requirements for the source install: Python 3.10+, `qemu-utils` (`qemu-img`), `e2fsprogs`, Pillow for
 the GUI harness, and the QEMU fork binary (see "Building the QEMU binary").
 `lobstervm doctor` checks that the kernel, device tree and base disk are found.
 
