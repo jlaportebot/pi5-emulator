@@ -347,7 +347,15 @@ def _add_runtime_commands(add):
     serial.add_argument("-f", "--follow", action="store_true")
 
 
+def _make_output_utf8():
+    """Guest text holds non-ASCII; never die on a legacy (cp1252) console."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv=None):
+    _make_output_utf8()
     args = build_parser().parse_args(argv)
     try:
         return args.handler(VmStore(), args)

@@ -39,6 +39,8 @@ MOUSE_LEFT = 1
 MONITOR_CHANNEL = "monitor"
 SERIAL_CHANNEL = "serial"
 MONITOR_START_TIMEOUT_S = 20.0
+SCREENSHOT_WRITE_TIMEOUT_S = 10.0
+LOG_TAIL_CHARS = 600
 POWEROFF_GRACE_S = 5.0
 LEGACY_DEVICE_ENV = ("LBST_RES", "LBST_SHARE", "LBST_DISKIMG")
 
@@ -185,9 +187,20 @@ class Machine:
         fmt = " -f png" if path.suffix.lower() == ".png" else ""
         path.unlink(missing_ok=True)
         self.hmp(f"screendump {path}{fmt}")
-        if not path.exists():
-            raise VmError(f"screenshot was not written to {path}")
+        self._wait_file_written(path)
         return path
+
+    def _wait_file_written(self, path):
+        """QEMU may reply before the dump is flushed (Windows): wait for a stable size."""
+        deadline = time.monotonic() + SCREENSHOT_WRITE_TIMEOUT_S
+        last_size = -1
+        while time.monotonic() < deadline:
+            size = path.stat().st_size if path.exists() else 0
+            if size > 0 and size == last_size:
+                return
+            last_size = size
+            time.sleep(POLL_INTERVAL_S)
+        raise VmError(f"screenshot was not written to {path}")
 
     def mouse_move(self, x, y):
         self.hmp(f"lmouse {int(x)} {int(y)}")
@@ -331,7 +344,7 @@ class Machine:
         deadline = time.monotonic() + MONITOR_START_TIMEOUT_S
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                tail = self.qemu_log_path.read_text(errors="replace")[-600:]
+                tail = self.qemu_log_path.read_text(errors="replace")[-LOG_TAIL_CHARS:]
                 self.pid_path.unlink(missing_ok=True)
                 raise VmError(f"QEMU exited during startup:\n{tail}")
             if self.monitor.is_ready():
@@ -339,7 +352,8 @@ class Machine:
                 self.serial.restrict()
                 return
             time.sleep(POLL_INTERVAL_S)
-        raise VmError("QEMU monitor never became reachable")
+        log = self.qemu_log_path.read_text(errors="replace")[-LOG_TAIL_CHARS:]
+        raise VmError(f"QEMU monitor never became reachable; qemu.log:\n{log}")
 
     def _wait_exit(self, timeout):
         deadline = time.monotonic() + timeout

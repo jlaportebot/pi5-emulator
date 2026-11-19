@@ -505,6 +505,24 @@ class TestFirstRun(TempDirCase):
             self.assertEqual(firstrun.missing_components_message(), "")
 
 
+class TestScreenshotWrite(TempDirCase):
+    @staticmethod
+    def wait_written(path):
+        Machine._wait_file_written(None, path)  # needs no VM state
+
+    def test_empty_file_is_not_accepted(self):
+        target = self.tmp / "s.png"
+        target.write_bytes(b"")
+        with patch("lobstervm.machine.SCREENSHOT_WRITE_TIMEOUT_S", 0.5), \
+                self.assertRaises(VmError):
+            self.wait_written(target)
+
+    def test_stable_non_empty_file_is_accepted(self):
+        target = self.tmp / "s.png"
+        target.write_bytes(b"png")
+        self.wait_written(target)
+
+
 class TestQuickstartCommand(TempDirCase):
     def run_quickstart(self, store, problem=""):
         from lobstervm import cli
