@@ -39,8 +39,17 @@ make_dmg() {
   cp -a "$app" "$staging/"
   ln -s /Applications "$staging/Applications"
   rm -f "$dmg"
-  hdiutil create -volname "LobsterVM" -srcfolder "$staging" -ov -format UDZO "$dmg"
-  rm -rf "$staging"
+  # hdiutil fails with "Resource busy" now and then on CI runners (Spotlight, XProtect).
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if hdiutil create -volname "LobsterVM" -srcfolder "$staging" -ov -format UDZO "$dmg"; then
+      rm -rf "$staging"
+      return 0
+    fi
+    echo "hdiutil create failed (attempt $attempt), retrying" >&2
+    sleep $((attempt * 5))
+  done
+  return 1
 }
 
 check_main_executable
