@@ -6,3 +6,4 @@ lobsteros.img
 lobsteros-overlay.qcow2
 tools/gui_test_out/
 tools/gui_test_results.xml
+packaging/icons/

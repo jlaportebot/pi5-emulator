@@ -1,0 +1,194 @@
+name: LobsterVM installers
+
+# Tag v*          -> GitHub Release with the installers.
+# Schedule / manual run on master -> rolling "nightly" prerelease.
+# Anything else (e.g. manual run on a branch) builds and smoke-tests only.
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  NIGHTLY_TAG: nightly
+
+jobs:
+  assemble:
+    name: Assemble inputs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install e2fsprogs (base disk)
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs
+      - name: Download and verify kernel + QEMU, build the base disk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then version="${GITHUB_REF_NAME#v}"; else version=nightly; fi
+          python3 packaging/assemble_inputs.py --out inputs --version "$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inputs
+          path: inputs/
+          if-no-files-found: error
+
+  package:
+    name: Package (${{ matrix.platform }})
+    needs: assemble
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: windows-x86_64, os: windows-latest, archive: lobster-qemu-windows-x86_64.zip}
+          - {platform: macos-arm64, os: macos-15, archive: lobster-qemu-macos-arm64.tar.gz}
+          - {platform: linux-x86_64, os: ubuntu-24.04, archive: lobster-qemu-linux-x86_64.tar.gz}
+          - {platform: linux-aarch64, os: ubuntu-24.04-arm, archive: lobster-qemu-linux-aarch64.tar.gz}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: packaging/requirements.txt
+      - run: pip install -r packaging/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: inputs
+          path: inputs
+      - name: Build the bundle (PyInstaller + QEMU + kernel + base disk)
+        run: |
+          version="$(sed -n 's/^version=//p' inputs/VERSIONS.txt)"
+          python packaging/build_bundle.py --out dist --version "$version" \
+            --qemu-archive "inputs/qemu/${{ matrix.archive }}" \
+            --kernel inputs/kernel8.img --dtb inputs/bcm2712-rpi-5-b.dtb \
+            --base inputs/lobsteros.img --versions inputs/VERSIONS.txt
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+      - name: Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        run: |
+          choco install innosetup -y --no-progress
+          python packaging/make_windows_installer.py --bundle dist/LobsterVM \
+            --version "$VERSION" --out installers
+      - name: macOS app signing (ad hoc) and dmg
+        if: runner.os == 'macOS'
+        run: |
+          packaging/ci/bundle_sdl3_macos.sh dist/LobsterVM.app
+          packaging/make_macos_dmg.sh dist/LobsterVM.app "$VERSION" installers
+      - name: Linux AppImage
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y desktop-file-utils
+          packaging/make_appimage.sh dist/LobsterVM "$VERSION" installers
+      - name: Installer size
+        run: ls -l installers
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: installers/*
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke (${{ matrix.platform }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: windows-x86_64, os: windows-latest}
+          - {platform: macos-arm64, os: macos-15}
+          - {platform: linux-x86_64, os: ubuntu-24.04}
+          - {platform: linux-aarch64, os: ubuntu-24.04-arm}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Only the test driver comes from the repo; the product is the downloaded installer.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: packaging/requirements.txt
+      - run: pip install pillow==12.2.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: installer
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: packaging/ci/install_windows.ps1 -InstallerDir installer
+      - name: Install (macOS)
+        if: runner.os == 'macOS'
+        run: packaging/ci/install_macos.sh installer
+      - name: Install (Linux)
+        if: runner.os == 'Linux'
+        run: packaging/ci/install_linux.sh installer
+      - name: Smoke test the installed app
+        run: |
+          prefix=()
+          if [ "$RUNNER_OS" = "Linux" ]; then prefix=(--cli-prefix cli); fi
+          python packaging/smoke_test.py --cli "$LOBSTERVM_CLI" "${prefix[@]}" --out smoke-out
+      - name: Uninstall (Windows)
+        if: runner.os == 'Windows' && !cancelled()
+        shell: pwsh
+        run: packaging/ci/uninstall_windows.ps1
+      - name: Uninstall (macOS)
+        if: runner.os == 'macOS' && !cancelled()
+        run: packaging/ci/uninstall_macos.sh
+      - name: Uninstall (Linux)
+        if: runner.os == 'Linux' && !cancelled()
+        run: packaging/ci/uninstall_linux.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.platform }}
+          path: smoke-out/
+          if-no-files-found: warn
+
+  publish:
+    name: Publish
+    needs: smoke
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.ref == 'refs/heads/master' &&
+       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: inputs
+          path: inputs
+      - name: Checksums
+        run: |
+          cp inputs/VERSIONS.txt release/VERSIONS.txt
+          (cd release && sha256sum LobsterVM-* > SHA256SUMS && cat SHA256SUMS)
+      - name: Publish release
+        run: packaging/ci/publish_release.sh release

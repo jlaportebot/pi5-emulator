@@ -505,5 +505,85 @@ class TestFirstRun(TempDirCase):
             self.assertEqual(firstrun.missing_components_message(), "")
 
 
+class TestScreenshotWrite(TempDirCase):
+    @staticmethod
+    def wait_written(path):
+        Machine._wait_file_written(None, path)  # needs no VM state
+
+    def test_empty_file_is_not_accepted(self):
+        target = self.tmp / "s.png"
+        target.write_bytes(b"")
+        with patch("lobstervm.machine.SCREENSHOT_WRITE_TIMEOUT_S", 0.5), \
+                self.assertRaises(VmError):
+            self.wait_written(target)
+
+    def test_stable_non_empty_file_is_accepted(self):
+        target = self.tmp / "s.png"
+        target.write_bytes(b"png")
+        self.wait_written(target)
+
+
+class TestPpmToPng(unittest.TestCase):
+    def test_roundtrip_through_pillow(self):
+        from io import BytesIO
+
+        from PIL import Image
+
+        from lobstervm import ppm
+        pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30])
+        png = ppm.ppm_to_png(b"P6\n2 2\n255\n" + pixels)
+        image = Image.open(BytesIO(png)).convert("RGB")
+        self.assertEqual(image.size, (2, 2))
+        self.assertEqual(list(image.getdata()), [(255, 0, 0), (0, 255, 0), (0, 0, 255),
+                                                 (10, 20, 30)])
+
+    def test_rejects_truncated_pixels_and_wrong_magic(self):
+        from lobstervm import ppm
+        with self.assertRaises(ValueError):
+            ppm.ppm_to_png(b"P6\n2 2\n255\nabc")
+        with self.assertRaises(ValueError):
+            ppm.ppm_to_png(b"P5\n1 1\n255\nx")
+
+
+class TestScreenshotFallback(TempDirCase):
+    def test_png_falls_back_to_ppm_when_qemu_lacks_libpng(self):
+        from PIL import Image
+        machine = Machine.__new__(Machine)
+        target = self.tmp / "s.png"
+
+        def fake_hmp(command, **_):
+            if "-f png" in command:
+                return "Error: Enable PNG support with libpng for screendump"
+            Path(command.split('"')[1]).write_bytes(b"P6\n1 1\n255\n\x01\x02\x03")
+            return ""
+        machine.hmp = fake_hmp
+        self.assertEqual(machine.screenshot(target), target)
+        self.assertEqual(Image.open(target).convert("RGB").getpixel((0, 0)), (1, 2, 3))
+        self.assertFalse(target.with_suffix(".ppm").exists())
+
+
+class TestQuickstartCommand(TempDirCase):
+    def run_quickstart(self, store, problem=""):
+        from lobstervm import cli
+        base = self.tmp / "base.img"
+        base.write_bytes(b"")
+        with patch.object(firstrun, "missing_components_message", return_value=problem), \
+                patch("lobstervm.config.run_qemu_img"), \
+                patch.dict(os.environ, {"LOBSTER_BASE_DISK": str(base)}):
+            return cli.cmd_quickstart(store, None)
+
+    def test_creates_default_vm_once(self):
+        store = VmStore(self.tmp / "vms")
+        self.assertEqual(self.run_quickstart(store), 0)
+        self.assertEqual(store.list_names(), ["LobsterOS"])
+        self.assertEqual(self.run_quickstart(store), 0)
+        self.assertEqual(store.list_names(), ["LobsterOS"])
+
+    def test_missing_components_fail_without_creating(self):
+        store = VmStore(self.tmp / "vms")
+        self.assertEqual(self.run_quickstart(store, "kernel8.img not found"), 1)
+        self.assertEqual(store.list_names(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

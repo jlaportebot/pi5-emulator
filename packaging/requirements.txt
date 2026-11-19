@@ -1,1 +1,2 @@
 pyinstaller==6.11.1
+pillow==12.2.0

@@ -4,7 +4,7 @@ import sys
 import time
 from dataclasses import fields
 
-from . import accel, disk, paths
+from . import accel, disk, firstrun, paths
 from .config import MACHINE_BY_MEMORY_GB, DISPLAY_BACKENDS, VmConfig, VmError, VmStore
 from .machine import Machine
 
@@ -54,6 +54,20 @@ def cmd_create(store, args):
     _apply_config_options(config, args)
     store.create(config)
     print(f"Created VM {args.name} in {store.vm_dir(args.name)}")
+    return 0
+
+
+def cmd_quickstart(store, args):
+    """Create the default VM from the bundled base disk unless VMs already exist."""
+    problem = firstrun.missing_components_message()
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    created = firstrun.ensure_default_vm(store)
+    if created:
+        print(f"Created VM {created}. Start it with: lobstervm start {created}")
+    else:
+        print("A VM already exists; nothing to do.")
     return 0
 
 
@@ -252,6 +266,8 @@ def build_parser():
 
     add("list", cmd_list, "list VMs and their state", named=False)
     add("doctor", cmd_doctor, "check that QEMU, kernel and disk are found", named=False)
+    add("quickstart", cmd_quickstart, "create the default LobsterOS VM on first use",
+        named=False)
     add("gui", cmd_gui, "open the graphical VM manager", named=False)
     _add_config_options(add("create", cmd_create, "create a VM"))
     _add_config_options(add("modify", cmd_modify, "change a VM's settings"))
@@ -331,7 +347,15 @@ def _add_runtime_commands(add):
     serial.add_argument("-f", "--follow", action="store_true")
 
 
+def _make_output_utf8():
+    """Guest text holds non-ASCII; never die on a legacy (cp1252) console."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv=None):
+    _make_output_utf8()
     args = build_parser().parse_args(argv)
     try:
         return args.handler(VmStore(), args)
