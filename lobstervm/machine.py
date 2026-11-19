@@ -38,7 +38,7 @@ POLL_INTERVAL_S = 0.2
 MOUSE_LEFT = 1
 MONITOR_CHANNEL = "monitor"
 SERIAL_CHANNEL = "serial"
-MONITOR_START_TIMEOUT_S = 20.0
+MONITOR_START_TIMEOUT_S = 60.0
 SCREENSHOT_WRITE_TIMEOUT_S = 10.0
 LOG_TAIL_CHARS = 600
 POWEROFF_GRACE_S = 5.0
@@ -186,11 +186,12 @@ class Machine:
         path = Path(path).resolve()
         fmt = " -f png" if path.suffix.lower() == ".png" else ""
         path.unlink(missing_ok=True)
-        self.hmp(f"screendump {path}{fmt}")
-        self._wait_file_written(path)
+        # HMP unescapes backslashes in strings, so Windows paths need forward slashes.
+        reply = self.hmp(f'screendump "{path.as_posix()}"{fmt}')
+        self._wait_file_written(path, reply)
         return path
 
-    def _wait_file_written(self, path):
+    def _wait_file_written(self, path, monitor_reply=""):
         """QEMU may reply before the dump is flushed (Windows): wait for a stable size."""
         deadline = time.monotonic() + SCREENSHOT_WRITE_TIMEOUT_S
         last_size = -1
@@ -200,7 +201,8 @@ class Machine:
                 return
             last_size = size
             time.sleep(POLL_INTERVAL_S)
-        raise VmError(f"screenshot was not written to {path}")
+        raise VmError(f"screenshot was not written to {path} "
+                      f"(monitor said: {monitor_reply.strip() or 'nothing'})")
 
     def mouse_move(self, x, y):
         self.hmp(f"lmouse {int(x)} {int(y)}")

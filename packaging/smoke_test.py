@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -144,6 +145,12 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
+def save_qemu_logs(home, out):
+    """Keep every VM's qemu.log: the runtime dirs vanish with the throwaway HOME."""
+    for log in home.rglob("qemu.log"):
+        shutil.copyfile(log, out / f"qemu-{log.parent.name}.log")
+
+
 def run_smoke(command, out):
     out.mkdir(parents=True, exist_ok=True)
     report = {}
@@ -154,6 +161,7 @@ def run_smoke(command, out):
         try:
             lifecycle(Runner(command, env, log), out / "shot.png", report, out / "serial.txt")
         finally:
+            save_qemu_logs(Path(home_dir), out)
             (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"SMOKE TEST PASSED {json.dumps(report)}")
 
