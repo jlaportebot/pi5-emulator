@@ -87,7 +87,9 @@ jobs:
             --version "$VERSION" --out installers
       - name: macOS app signing (ad hoc) and dmg
         if: runner.os == 'macOS'
-        run: packaging/make_macos_dmg.sh dist/LobsterVM.app "$VERSION" installers
+        run: |
+          packaging/ci/bundle_sdl3_macos.sh dist/LobsterVM.app
+          packaging/make_macos_dmg.sh dist/LobsterVM.app "$VERSION" installers
       - name: Linux AppImage
         if: runner.os == 'Linux'
         run: |
