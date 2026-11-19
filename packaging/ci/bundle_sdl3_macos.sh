@@ -14,4 +14,5 @@ cp -L "$sdl3" "$qemu_dir/lib/libSDL3.0.dylib"
 chmod u+w "$qemu_dir/lib/libSDL3.0.dylib"
 otool -L "$qemu_dir/lib/libSDL3.0.dylib"
 codesign --force --sign - --timestamp=none "$qemu_dir/lib/libSDL3.0.dylib"
-env -i PATH=/usr/bin:/bin timeout 60 "$qemu_dir/bin/qemu-system-aarch64" --version
+# macOS has no GNU timeout; perl ships with the OS
+env -i PATH=/usr/bin:/bin perl -e 'alarm shift @ARGV; exec @ARGV' 60 "$qemu_dir/bin/qemu-system-aarch64" --version
