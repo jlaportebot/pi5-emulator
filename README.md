@@ -72,8 +72,9 @@ lobstervm gui                                         # graphical manager (needs
 
 `lobstervm start myvm` without `--headless` opens a GTK window; `--display`
 selects `gtk`, `sdl`, `vnc` or `none`. Other commands: `list`, `show`, `modify`,
-`delete`, `reset`, `pause`, `resume`, `factory-reset`, `click`, `move`, `drag`,
-`key`, `type`, `hmp`, `serial`. `lobstervm <command> --help` lists the options.
+`delete`, `reset`, `pause`, `resume`, `factory-reset`, `click`, `move`, `wheel`,
+`drag`, `key`, `type`, `hmp`, `serial`. `lobstervm <command> --help` lists the
+options.
 
 ## VM settings
 
@@ -84,6 +85,7 @@ Set with `create` and changed with `modify` (VM stopped).
 | Memory | `--memory` | 2, 4, 8 or 16 (GB); maps to a QEMU machine variant |
 | Resolution | `--resolution` | `WIDTHxHEIGHT`, default `1920x1080` |
 | Shared folder | `--share DIR` | host directory, visible in the guest as `/share` |
+| Host compiler | `--host-compile DIR` | `include/` + `liblobsterc.a` for the guest's `cc`; default off (see below) |
 | Audio | `--audio on\|off` | headless VMs always run with `-audio none` |
 | Display | `--display` | `gtk`, `sdl`, `vnc`, `none` |
 | Kernel | `--kernel PATH` | `kernel8.img` to boot |
@@ -102,6 +104,24 @@ qemu-system-aarch64 -M raspi5b,graphics=on -m 4G -accel tcg -cpu cortex-a76 -ker
 
 Commas in the shared folder path are doubled for QEMU. Example check of a
 shared folder: put `proof.txt` in the folder, then `lobstervm shell myvm 'ls /share'`.
+
+`--host-compile DIR` (on `create` and `modify`, while the VM is stopped)
+switches the guest's `cc` over to the host compiler: `DIR` must hold the
+headers under `include/` and the archive `liblobsterc.a` (validate rejects
+anything else), and the QEMU command line gains
+`-global lobster-net.compile-libc=DIR`. Empty (the default) leaves the guest's
+`cc` off. This is an opt-in power feature with a security caveat: with it on, a
+guest `cc` invocation runs on the host and can therefore read host files, so
+point it at a directory you are happy to expose and turn it off again with
+`lobstervm modify myvm --host-compile ""`. `show` reports the setting, and VMs
+created before the option existed still load (the key is absent from their
+`vm.json`).
+
+`lobstervm wheel myvm DY [--dx DX]` scrolls the guest mouse wheel by `DY`
+notches (`+` up, `-` down); `--dx` scrolls horizontally (`+` right, `-` left).
+It is the HMP monitor's `lwheel`, so the VM must be running, and a negative
+count parses without a separator: `lobstervm wheel myvm -3` scrolls down three
+notches (`lobstervm wheel myvm -- -3` also works where a separator is needed).
 
 ## KVM acceleration
 

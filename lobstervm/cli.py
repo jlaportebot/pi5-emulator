@@ -22,13 +22,17 @@ def _add_config_options(parser):
                         help="tcg (software, default) or kvm (aarch64 Linux host with /dev/kvm)")
     parser.add_argument("--share", dest="shared_folder",
                         help="host directory exposed to the guest as /share")
+    parser.add_argument("--host-compile", dest="host_compile_libc",
+                        metavar="LIBC_DIR",
+                        help="let the guest's cc use the host compiler with this "
+                             "libc dir ('' = off); the guest can then read host files")
     parser.add_argument("--kernel", help="kernel8.img to boot (default: bundled)")
     parser.add_argument("--description")
 
 
 def _apply_config_options(config, args):
     for field in ("memory_gb", "resolution", "display", "shared_folder",
-                  "kernel", "description", "accel"):
+                  "host_compile_libc", "kernel", "description", "accel"):
         value = getattr(args, field, None)
         if value is not None:
             setattr(config, field, value)
@@ -192,6 +196,11 @@ def cmd_move(store, args):
     return 0
 
 
+def cmd_wheel(store, args):
+    Machine(args.name, store).mouse_wheel(args.dy, args.dx)
+    return 0
+
+
 def cmd_drag(store, args):
     Machine(args.name, store).drag(args.x0, args.y0, args.x1, args.y1)
     return 0
@@ -330,6 +339,10 @@ def _add_runtime_commands(add):
     move = add("move", cmd_move, "move the guest pointer")
     move.add_argument("x", type=int)
     move.add_argument("y", type=int)
+    wheel = add("wheel", cmd_wheel, "scroll the guest mouse wheel (+ up, - down)")
+    wheel.add_argument("dy", type=int, help="notches; + up, - down")
+    wheel.add_argument("--dx", type=int, default=0,
+                       help="horizontal notches; + right, - left")
     drag = add("drag", cmd_drag, "drag from one point to another")
     for coordinate in ("x0", "y0", "x1", "y1"):
         drag.add_argument(coordinate, type=int)

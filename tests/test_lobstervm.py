@@ -5,6 +5,7 @@ Unit tests for lobstervm (E2.8).
 Run with: python3 -m unittest discover -s tests -v
 These tests do NOT require QEMU to be present.
 """
+import json
 import os
 import shutil
 import socket
@@ -29,7 +30,7 @@ from lobstervm.machine import (
     _shell_output
 )
 from lobstervm import paths
-from lobstervm.cli import main, build_parser
+from lobstervm.cli import main, build_parser, _apply_config_options
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -177,7 +178,7 @@ class TestCommandLine(unittest.TestCase):
             "list", "doctor", "gui", "create", "modify",
             "show", "delete", "start", "stop", "reset",
             "pause", "resume", "factory-reset", "snapshot",
-            "screenshot", "click", "move", "drag", "key",
+            "screenshot", "click", "move", "wheel", "drag", "key",
             "type", "shell", "hmp", "serial"
         ]
         for cmd in subcommands:
@@ -284,6 +285,44 @@ class TestCommandLine(unittest.TestCase):
         self.assertEqual(args.name, "myvm")
         self.assertEqual(args.x, 50)
         self.assertEqual(args.y, 60)
+
+    def test_wheel_parsing_negative_dy(self):
+        """Wheel accepts a negative notch without a '--' separator."""
+        args = self.parser.parse_args(["wheel", "myvm", "-3"])
+        self.assertEqual(args.name, "myvm")
+        self.assertEqual(args.dy, -3)
+        self.assertEqual(args.dx, 0)
+
+    def test_wheel_parsing_negative_dx(self):
+        """--dx may be negative too (horizontal scroll left)."""
+        args = self.parser.parse_args(["wheel", "myvm", "2", "--dx", "-1"])
+        self.assertEqual(args.dy, 2)
+        self.assertEqual(args.dx, -1)
+
+    def test_wheel_negative_notches_reach_the_monitor(self):
+        """cmd_wheel turns -3 into the HMP command 'lwheel -3 0'."""
+        VmStore(self.tmpdir).create(VmConfig(name="vm1"))
+        with patch.object(Machine, "hmp") as hmp:
+            self.assertEqual(self._run_cli(["wheel", "vm1", "-3"]), 0)
+        hmp.assert_called_once_with("lwheel -3 0")
+
+    def test_wheel_horizontal_reaches_the_monitor(self):
+        """cmd_wheel turns 2 --dx -1 into 'lwheel 2 -1'."""
+        VmStore(self.tmpdir).create(VmConfig(name="vm1"))
+        with patch.object(Machine, "hmp") as hmp:
+            self.assertEqual(
+                self._run_cli(["wheel", "vm1", "2", "--dx", "-1"]), 0)
+        hmp.assert_called_once_with("lwheel 2 -1")
+
+    def test_host_compile_option_reaches_the_config(self):
+        """--host-compile sets the setting, and '' clears it again."""
+        args = self.parser.parse_args(["modify", "myvm", "--host-compile", "/libc"])
+        config = VmConfig(name="myvm")
+        _apply_config_options(config, args)
+        self.assertEqual(config.host_compile_libc, "/libc")
+        off = self.parser.parse_args(["modify", "myvm", "--host-compile", ""])
+        _apply_config_options(config, off)
+        self.assertEqual(config.host_compile_libc, "")
 
     def test_drag_parsing(self):
         """Drag command should parse four coordinates."""
@@ -474,6 +513,30 @@ class TestVmStore(unittest.TestCase):
         with self.assertRaises(VmError):
             self.store.create(config)
 
+    def test_vm_json_without_host_compile_loads(self):
+        """A vm.json written before --host-compile existed still loads."""
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = VmStore(tmp)
+            legacy.root.mkdir(parents=True, exist_ok=True)
+            vm_dir = legacy.vm_dir("legacy")
+            vm_dir.mkdir(parents=True)
+            (vm_dir / "vm.json").write_text(json.dumps({
+                "name": "legacy",
+                "memory_gb": 4,
+                "resolution": "1920x1080",
+                "display": "none",
+                "audio": True,
+                "shared_folder": "",
+                "kernel": "",
+                "description": "",
+                "extra_args": [],
+                "accel": "tcg",
+            }))
+            loaded = legacy.load("legacy")
+            self.assertEqual(loaded.name, "legacy")
+            self.assertEqual(loaded.host_compile_libc, "")
+            loaded.validate()
+
     def test_delete_vm(self):
         """Delete should remove VM directory."""
         config = VmConfig(name="testvm")
@@ -623,6 +686,20 @@ class TestMachine(unittest.TestCase):
         machine = Machine("testvm", self.store)
         with self.assertRaises(VmError):
             machine.hmp("info status")
+
+    def test_mouse_wheel_sends_lwheel(self):
+        """mouse_wheel sends both notches, dx defaulting to 0."""
+        machine = self._running_machine()
+        with patch.object(Machine, "hmp") as hmp:
+            machine.mouse_wheel(-3)
+        hmp.assert_called_once_with("lwheel -3 0")
+
+    def test_mouse_wheel_sends_horizontal_notch(self):
+        """mouse_wheel forwards dx as well."""
+        machine = self._running_machine()
+        with patch.object(Machine, "hmp") as hmp:
+            machine.mouse_wheel(2, -1)
+        hmp.assert_called_once_with("lwheel 2 -1")
 
     def _running_machine(self):
         """A Machine whose VM looks running and whose serial log is a file."""
