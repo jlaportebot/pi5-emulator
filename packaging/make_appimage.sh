@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Wrap a built Linux bundle into LobsterVM-<version>-<arch>.AppImage.
 #   packaging/make_appimage.sh <bundle dir> <version> <out dir>
-# The AppImage starts the GUI; `<AppImage> cli <args>` runs the CLI instead.
+# With no arguments the AppImage starts the GUI; with any arguments it runs the
+# CLI (`<AppImage> create demo`). A leading `cli` argument is accepted and dropped.
 set -euo pipefail
 
 APPIMAGETOOL_VERSION=1.9.0
@@ -54,7 +55,10 @@ if [ "${1:-}" = "cli" ]; then
   shift
   exec "$app/lobstervm-cli" "$@"
 fi
-exec "$app/LobsterVM" "$@"
+if [ "$#" -gt 0 ]; then
+  exec "$app/lobstervm-cli" "$@"
+fi
+exec "$app/LobsterVM"
 APPRUN
   chmod +x "$1/AppRun"
 }

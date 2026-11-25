@@ -2,7 +2,8 @@
 """Drive an installed/bundled CLI through a full VM lifecycle, with no repo or env overrides.
 
     python3 packaging/smoke_test.py --bundle <dir>          # <out>/LobsterVM or the .app
-    python3 packaging/smoke_test.py --cli <exe> [--cli-prefix cli] --out smoke-out
+    python3 packaging/smoke_test.py --cli <exe> --out smoke-out
+    (add --cli-prefix <args> only when the executable needs leading arguments)
 
 Artefacts written to ``--out``: ``smoke.log`` (every command and its output),
 ``shot.png`` (the guest screen), ``report.json`` (timings) and, on failure,

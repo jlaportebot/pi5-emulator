@@ -29,7 +29,7 @@ First run: launch LobsterVM. On first launch with no VMs it creates a default
 VM named "LobsterOS" from the bundled disk; click Start. The CLI is reachable
 by passing arguments to the same binary (for example
 `./LobsterVM-<ver>-x86_64.AppImage create demo`, or `lobstervm.exe` in the
-Windows install folder).
+Windows install folder; on Linux a leading `cli` argument is also accepted).
 
 The builds are not code-signed (QEMU runs with TCG, so no entitlements are
 needed):
