@@ -35,6 +35,10 @@ class VmConfig:
     display: str = DEFAULT_DISPLAY
     audio: bool = True
     shared_folder: str = ""
+    #: Directory holding ``include/`` and ``liblobsterc.a`` for the guest's
+    #: ``cc``; empty keeps the guest's cc off (with it on the guest's
+    #: compiler runs on the host and can therefore read host files).
+    host_compile_libc: str = ""
     kernel: str = ""
     description: str = ""
     extra_args: list = field(default_factory=list)
@@ -55,8 +59,20 @@ class VmConfig:
             raise VmError(f"accel must be one of {accel.ACCELERATORS}")
         if self.shared_folder and not Path(self.shared_folder).is_dir():
             raise VmError(f"shared folder is not a directory: {self.shared_folder}")
+        self._validate_host_compile_libc()
         if self.kernel and not Path(self.kernel).is_file():
             raise VmError(f"kernel image not found: {self.kernel}")
+
+    def _validate_host_compile_libc(self):
+        """The host compiler needs a directory with ``include/`` and ``liblobsterc.a``."""
+        if not self.host_compile_libc:
+            return
+        libc = Path(self.host_compile_libc)
+        has_headers = (libc / "include").is_dir()
+        has_archive = (libc / "liblobsterc.a").is_file()
+        if not libc.is_dir() or not has_headers or not has_archive:
+            raise VmError("host compiler libc dir must contain include/ "
+                          f"and liblobsterc.a: {self.host_compile_libc}")
 
     @property
     def machine_type(self):

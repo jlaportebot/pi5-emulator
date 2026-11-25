@@ -225,6 +225,10 @@ class Machine:
     def mouse_move(self, x, y):
         self.hmp(f"lmouse {int(x)} {int(y)}")
 
+    def mouse_wheel(self, dy, dx=0):
+        """Scroll the wheel: ``dy`` notches (+ up, - down), ``dx`` (+ right, - left)."""
+        self.hmp(f"lwheel {int(dy)} {int(dx)}")
+
     def mouse_button(self, pressed, button=MOUSE_LEFT):
         self.hmp(f"lclick {button if pressed else 0}")
 
@@ -409,6 +413,9 @@ def _device_arguments(config):
     if config.shared_folder:
         folder = _qemu_option_value(config.shared_folder)
         arguments += ["-global", f"lobster-share.dir={folder}"]
+    if config.host_compile_libc:
+        libc = _qemu_option_value(config.host_compile_libc)
+        arguments += ["-global", f"lobster-net.compile-libc={libc}"]
     return arguments
 
 

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from image_stubs import ImageStubs
 
-from lobstervm.config import VmConfig, VmStore
+from lobstervm.config import VmConfig, VmError, VmStore
 from lobstervm.machine import Machine
 
 
@@ -70,6 +70,44 @@ class TestDeviceProperties(unittest.TestCase):
         folder.mkdir()
         command = self.command(shared_folder=str(folder))
         self.assertIn(f"lobster-share.dir={self.tmpdir}{os.sep}a,,b", command)
+
+    def _libc_dir(self, name="libc"):
+        """A directory that passes validate() as a host compiler libc."""
+        libc = Path(self.tmpdir) / name
+        (libc / "include").mkdir(parents=True)
+        (libc / "liblobsterc.a").write_bytes(b"")
+        return libc
+
+    def test_no_compile_libc_property_without_host_compile(self):
+        command = self.command()
+        self.assertFalse([arg for arg in command if arg.startswith("lobster-net")])
+
+    def test_host_compile_libc_becomes_compile_property(self):
+        libc = self._libc_dir()
+        command = self.command(host_compile_libc=str(libc))
+        self.assertIn(f"lobster-net.compile-libc={libc}", command)
+
+    def test_commas_in_host_compile_libc_are_doubled(self):
+        libc = self._libc_dir("a,b")
+        command = self.command(host_compile_libc=str(libc))
+        self.assertIn(
+            f"lobster-net.compile-libc={self.tmpdir}{os.sep}a,,b", command)
+
+    def test_host_compile_libc_without_archive_is_rejected(self):
+        libc = Path(self.tmpdir) / "libc"
+        (libc / "include").mkdir(parents=True)
+        config = VmConfig(name="vm", host_compile_libc=str(libc))
+        with self.assertRaises(VmError) as caught:
+            config.validate()
+        self.assertIn("must contain include/ and liblobsterc.a",
+                      str(caught.exception))
+
+    def test_host_compile_libc_without_headers_is_rejected(self):
+        libc = self._libc_dir()
+        (libc / "include").rmdir()
+        config = VmConfig(name="vm", host_compile_libc=str(libc))
+        with self.assertRaises(VmError):
+            config.validate()
 
     def test_spaces_in_shared_folder_stay_one_argument(self):
         folder = Path(self.tmpdir) / "my files"
