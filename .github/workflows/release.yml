@@ -142,10 +142,10 @@ jobs:
         if: runner.os == 'Linux'
         run: packaging/ci/install_linux.sh installer
       - name: Smoke test the installed app
-        run: |
-          prefix=()
-          if [ "$RUNNER_OS" = "Linux" ]; then prefix=(--cli-prefix cli); fi
-          python packaging/smoke_test.py --cli "$LOBSTERVM_CLI" "${prefix[@]}" --out smoke-out
+        run: python packaging/smoke_test.py --cli "$LOBSTERVM_CLI" --out smoke-out
+      - name: AppImage CLI compat (Linux)
+        if: runner.os == 'Linux'
+        run: '"$LOBSTERVM_CLI" cli --help > /dev/null'
       - name: Uninstall (Windows)
         if: runner.os == 'Windows' && !cancelled()
         shell: pwsh
