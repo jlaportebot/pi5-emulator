@@ -35,7 +35,7 @@ jobs:
       # The harness helpers analyse screenshots with Pillow (same version as
       # the dev host).
       - name: Install Pillow
-        run: pip install pillow==12.2.0
+        run: pip install pillow==13.0.0
 
       - name: Build the base disk image from base-root/
         if: runner.os == 'Linux'
