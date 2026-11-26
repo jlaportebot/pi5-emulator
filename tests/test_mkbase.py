@@ -186,3 +186,10 @@ class TestBuild(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBootOpenFile(unittest.TestCase):
+    def test_boot_open_is_empty_so_no_session_entries_are_restored(self):
+        from tools import mkbase
+        boot_open = mkbase.TREE_DIR / "etc" / "boot_open"
+        self.assertEqual(boot_open.stat().st_size, 0)
