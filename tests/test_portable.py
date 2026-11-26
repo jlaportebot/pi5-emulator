@@ -127,13 +127,13 @@ class TestBundleDiscovery(TempDirCase):
                 patch.dict(os.environ, {"LOBSTER_KERNEL": str(override)}):
             self.assertEqual(paths.default_kernel(), override)
 
-    def test_missing_component_error_lists_every_place_looked(self):
+    def test_missing_override_error_names_variable_and_path(self):
         with patch.dict(os.environ, {"LOBSTER_DTB": str(self.tmp / "no.dtb")}), \
                 patch.object(paths, "REPO_ROOT", self.tmp):
             with self.assertRaises(paths.MissingComponent) as caught:
                 paths.default_dtb()
         self.assertIn(str(self.tmp / "no.dtb"), str(caught.exception))
-        self.assertIn("Looked in", str(caught.exception))
+        self.assertIn("LOBSTER_DTB", str(caught.exception))
 
     def test_repo_file_is_not_bundled(self):
         self.assertFalse(paths.is_bundled(paths.REPO_ROOT / "kernel8.img"))
