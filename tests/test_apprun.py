@@ -3,13 +3,13 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 MAKE_APPIMAGE = REPO_DIR / "packaging" / "make_appimage.sh"
-SCRATCH_DIR = Path("/mnt/data/hermes/cache/scratch/appimage-cli")
 APPRUN_PATTERN = re.compile(r"<<'APPRUN'\n(.*?)\nAPPRUN\n", re.DOTALL)
 STUB = "#!/bin/sh\necho \"{name} $*\"\n"
 
@@ -27,10 +27,10 @@ def write_executable(path, text):
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+@unittest.skipIf(sys.platform == "win32", "AppRun is the Linux AppImage's POSIX shell entry point")
 class AppRunDispatchTest(unittest.TestCase):
     def setUp(self):
-        SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
-        holder = tempfile.TemporaryDirectory(dir=SCRATCH_DIR)
+        holder = tempfile.TemporaryDirectory()
         self.addCleanup(holder.cleanup)
         self.tmp = Path(holder.name)
         self.appdir = self.tmp / "appdir"
