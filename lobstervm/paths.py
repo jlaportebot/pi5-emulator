@@ -71,17 +71,19 @@ def is_bundled(path):
     return any(root in resolved.parents for root in bundle_dirs())
 
 
-def _env_path(variable):
-    value = os.environ.get(variable)
-    return Path(value) if value else None
-
-
 def _bundle_paths(relative):
     return [root / relative for root in bundle_dirs()]
 
 
-def _resolve(label, hint, candidates):
-    """First existing file in ``candidates``; else a precise error."""
+def _resolve(label, hint, variable, candidates):
+    """The override in ``variable`` when set, else the first existing candidate.
+
+    A set override is authoritative: it is the only location tried, so a typo
+    or wrong working directory fails loudly instead of booting a stale file.
+    """
+    override = os.environ.get(variable)
+    if override:
+        return _checked_override(label, hint, variable, override)
     looked = [Path(c) for c in candidates if c]
     for candidate in looked:
         if candidate.is_file():
@@ -90,11 +92,20 @@ def _resolve(label, hint, candidates):
     raise MissingComponent(f"{label} not found; {hint}. Looked in: {searched}")
 
 
+def _checked_override(label, hint, variable, value):
+    path = Path(value)
+    if path.is_file():
+        return path
+    raise MissingComponent(
+        f"{label} not found: {variable}={value!r} is not an existing file "
+        f"(it resolved to {path.absolute()}; relative values resolve against "
+        f"the current directory {Path.cwd()}); {hint}")
+
+
 def qemu_binary():
     """The LobsterOS QEMU fork (it must provide the raspi5b machine)."""
     return _resolve("QEMU fork", "set LOBSTER_QEMU to qemu-system-aarch64 built "
-                    "from jlaportebot/lobster-qemu", [
-        _env_path("LOBSTER_QEMU"),
+                    "from jlaportebot/lobster-qemu", "LOBSTER_QEMU", [
         *_bundle_paths(BUNDLE_QEMU_DIR / exe_name(QEMU_BASENAME)),
         REPO_ROOT.parent / "qemu-src" / "build-opt" / QEMU_BASENAME,
         Path.home() / "qemu-src" / "build-opt" / QEMU_BASENAME,
@@ -105,8 +116,8 @@ def qemu_binary():
 def qemu_img_binary():
     """``qemu-img`` matching the QEMU fork (bundle, QEMU's own dir, then PATH)."""
     name = exe_name(QEMU_IMG_BASENAME)
-    return _resolve("qemu-img", "set LOBSTER_QEMU_IMG or install qemu-utils", [
-        _env_path("LOBSTER_QEMU_IMG"),
+    return _resolve("qemu-img", "set LOBSTER_QEMU_IMG or install qemu-utils",
+                    "LOBSTER_QEMU_IMG", [
         *_bundle_paths(BUNDLE_QEMU_DIR / name),
         *_next_to_qemu(name),
         _which(QEMU_IMG_BASENAME),
@@ -126,16 +137,14 @@ def _which(program):
 
 def default_kernel():
     return _resolve("kernel8.img", f"set LOBSTER_KERNEL or copy a kernel into "
-                    f"{REPO_ROOT}", [
-        _env_path("LOBSTER_KERNEL"),
+                    f"{REPO_ROOT}", "LOBSTER_KERNEL", [
         *_bundle_paths(BUNDLE_SHARE_DIR / KERNEL_FILE),
         REPO_ROOT / KERNEL_FILE,
     ])
 
 
 def default_dtb():
-    return _resolve(DTB_FILE, "set LOBSTER_DTB", [
-        _env_path("LOBSTER_DTB"),
+    return _resolve(DTB_FILE, "set LOBSTER_DTB", "LOBSTER_DTB", [
         *_bundle_paths(BUNDLE_SHARE_DIR / DTB_FILE),
         REPO_ROOT / DTB_FILE,
     ])
@@ -144,8 +153,7 @@ def default_dtb():
 def base_disk():
     """The pristine ext2 system image every VM's disk is layered on."""
     return _resolve(BASE_IMAGE_FILE, "build it with `python3 tools/mkbase.py` "
-                    "or set LOBSTER_BASE_DISK", [
-        _env_path("LOBSTER_BASE_DISK"),
+                    "or set LOBSTER_BASE_DISK", "LOBSTER_BASE_DISK", [
         *_bundle_paths(BUNDLE_SHARE_DIR / BASE_IMAGE_FILE),
         REPO_ROOT / BASE_IMAGE_FILE,
     ])

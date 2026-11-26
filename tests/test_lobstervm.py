@@ -601,6 +601,78 @@ class TestPaths(unittest.TestCase):
         self.assertEqual(paths.QEMU_BASENAME, "qemu-system-aarch64")
 
 
+class TestEnvOverrides(unittest.TestCase):
+    """A set LOBSTER_* override is authoritative: it is used or it fails loudly."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._cwd = os.getcwd()
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _bundle_kernel(self):
+        kernel = self.root / "bundle" / "share" / "lobsteros" / "kernel8.img"
+        kernel.parent.mkdir(parents=True)
+        kernel.write_bytes(b"bundled")
+        return kernel
+
+    def test_override_pointing_at_missing_file_raises_naming_variable(self):
+        """A set-but-wrong override must not silently fall back."""
+        self._bundle_kernel()
+        with patch.dict(os.environ, {"LOBSTER_KERNEL": str(self.root / "typo.img")}), \
+                patch.object(paths, "bundle_dirs", return_value=[self.root / "bundle"]):
+            with self.assertRaises(paths.MissingComponent) as ctx:
+                paths.default_kernel()
+        self.assertIn("LOBSTER_KERNEL", str(ctx.exception))
+        self.assertIn(str(self.root / "typo.img"), str(ctx.exception))
+        self.assertNotIn("Looked in:", str(ctx.exception))
+
+    def test_override_pointing_at_existing_file_is_used(self):
+        """An existing override wins over a bundled copy."""
+        override = self.root / "mine.img"
+        override.write_bytes(b"mine")
+        with patch.dict(os.environ, {"LOBSTER_KERNEL": str(override)}), \
+                patch.object(paths, "bundle_dirs", return_value=[self.root / "bundle"]):
+            self.assertEqual(paths.default_kernel(), override)
+
+    def test_relative_override_error_names_absolute_path_and_cwd(self):
+        """Relative overrides resolve against the cwd; the error must say where."""
+        os.chdir(self.root)
+        with patch.dict(os.environ, {"LOBSTER_KERNEL": "kernels/x.img"}):
+            with self.assertRaises(paths.MissingComponent) as ctx:
+                paths.default_kernel()
+        message = str(ctx.exception)
+        self.assertIn("LOBSTER_KERNEL", message)
+        self.assertIn(str((self.root / "kernels" / "x.img").absolute()), message)
+        self.assertIn("current directory", message)
+
+    def test_empty_override_falls_back_to_search_order(self):
+        """An empty variable counts as unset."""
+        bundled = self._bundle_kernel()
+        with patch.dict(os.environ, {"LOBSTER_KERNEL": ""}), \
+                patch.object(paths, "bundle_dirs", return_value=[self.root / "bundle"]):
+            self.assertEqual(paths.default_kernel(), bundled)
+
+    def test_unset_override_falls_back_to_search_order(self):
+        """With no override the bundled kernel is still found as before."""
+        bundled = self._bundle_kernel()
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(paths, "bundle_dirs", return_value=[self.root / "bundle"]):
+            self.assertEqual(paths.default_kernel(), bundled)
+
+    def test_unset_override_missing_everywhere_lists_searched_paths(self):
+        """Fallback failures keep the existing 'Looked in' diagnostics."""
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(paths, "bundle_dirs", return_value=[self.root / "none"]):
+            with self.assertRaises(paths.MissingComponent) as ctx:
+                paths.default_kernel()
+        self.assertIn("Looked in:", str(ctx.exception))
+        self.assertNotIn("LOBSTER_KERNEL=", str(ctx.exception))
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Machine class tests (no QEMU)
 # ════════════════════════════════════════════════════════════════════════
